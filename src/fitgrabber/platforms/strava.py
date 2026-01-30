@@ -2,6 +2,7 @@ import json
 import logging
 import signal
 import time
+from collections import deque
 from pathlib import Path
 
 import typer
@@ -12,6 +13,38 @@ logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30
 DELAY_BETWEEN_ACTIVITIES = 3.0  # seconds
+RATE_WINDOW = 15 * 60  # 15 minutes in seconds
+RATE_LIMIT = 90  # pause before hitting Strava's 100/15min limit
+
+
+class _RateTracker:
+    """Track API requests within a sliding 15-minute window."""
+
+    def __init__(self, window: float = RATE_WINDOW, limit: int = RATE_LIMIT):
+        self.window = window
+        self.limit = limit
+        self.timestamps: deque[float] = deque()
+
+    def _prune(self):
+        cutoff = time.time() - self.window
+        while self.timestamps and self.timestamps[0] < cutoff:
+            self.timestamps.popleft()
+
+    def record(self):
+        self.timestamps.append(time.time())
+
+    def wait_if_needed(self):
+        """Block until we're under the rate limit."""
+        self._prune()
+        if len(self.timestamps) >= self.limit:
+            oldest = self.timestamps[0]
+            wait = oldest + self.window - time.time() + 1
+            if wait > 0:
+                count = len(self.timestamps)
+                typer.echo(f"  Rate limit: {count} reqs in window. Pausing {wait:.0f}s...")
+                time.sleep(wait)
+                self._prune()
+
 
 # Suppress noisy stravalib/root warnings
 logging.getLogger("stravalib").setLevel(logging.ERROR)
@@ -108,14 +141,16 @@ def _get_access_token(cfg: Config) -> str:
     raise RuntimeError("No Strava access_token or refresh_token configured.")
 
 
-def _fetch_activities_with_retry(client, max_retries: int = 3) -> list:
+def _fetch_activities_with_retry(client, rate: _RateTracker, max_retries: int = 3) -> list:
     """Fetch activity list with rate limit retry."""
     for attempt in range(max_retries):
         try:
+            rate.wait_if_needed()
             signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(120)  # 2 min timeout for full list
             activities = list(client.get_activities())
             signal.alarm(0)
+            rate.record()
             return activities
         except _Timeout:
             signal.alarm(0)
@@ -141,15 +176,17 @@ def _fetch_activities_with_retry(client, max_retries: int = 3) -> list:
 
 
 def _fetch_activity_with_retry(
-    client, activity_id: int, max_retries: int = 3
+    client, activity_id: int, rate: _RateTracker, max_retries: int = 3
 ) -> dict | None:
     """Fetch activity detail + streams, retrying on rate limit."""
     for attempt in range(max_retries):
         try:
+            rate.wait_if_needed()
             signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(REQUEST_TIMEOUT)
             detail = client.get_activity(activity_id)
             signal.alarm(0)
+            rate.record()
 
             record: dict = {
                 "id": activity_id,
@@ -162,11 +199,11 @@ def _fetch_activity_with_retry(
             }
 
             try:
+                rate.wait_if_needed()
                 signal.alarm(REQUEST_TIMEOUT)
-                streams = client.get_activity_streams(
-                    activity_id, types=STREAM_TYPES
-                )
+                streams = client.get_activity_streams(activity_id, types=STREAM_TYPES)
                 signal.alarm(0)
+                rate.record()
                 record["streams"] = {k: v.data for k, v in streams.items()}
             except _Timeout:
                 signal.alarm(0)
@@ -208,8 +245,9 @@ def sync(cfg: Config, platform: str = "strava") -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
 
     client = Client(access_token=token)
+    rate = _RateTracker()
     typer.echo("  Fetching activity list...")
-    activities = _fetch_activities_with_retry(client)
+    activities = _fetch_activities_with_retry(client, rate)
     if not activities:
         typer.echo("  No activities fetched.")
         return []
@@ -239,7 +277,7 @@ def sync(cfg: Config, platform: str = "strava") -> list[Path]:
 
             time.sleep(DELAY_BETWEEN_ACTIVITIES)
 
-            record = _fetch_activity_with_retry(client, activity.id)
+            record = _fetch_activity_with_retry(client, activity.id, rate)
             if record is None:
                 continue
 
