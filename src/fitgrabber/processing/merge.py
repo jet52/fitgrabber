@@ -85,6 +85,13 @@ SPORT_ALIASES: dict[str, str] = {
     "swim": "swimming",
     "walk": "walking",
     "hike": "hiking",
+    "weighttraining": "strength",
+    "training": "strength",
+    "workout": "strength",
+    "generic": "other",
+    "backcountryski": "skiing",
+    "nordicski": "skiing",
+    "alpineski": "skiing",
 }
 
 
@@ -94,21 +101,42 @@ def _normalize_sport(sport: str) -> str:
 
 def _resolve_sport(activities: list[Activity], verbose: bool) -> str:
     """Pick the best sport type, inferring from data if sources disagree."""
-    sports = {_normalize_sport(a.sport) for a in activities if a.sport and a.sport != "unknown"}
+    normalized = [
+        _normalize_sport(a.sport)
+        for a in activities
+        if a.sport and a.sport not in ("unknown", "other")
+    ]
+    unique = set(normalized)
 
-    if len(sports) == 1:
-        return sports.pop()
+    if len(unique) == 1:
+        return unique.pop()
 
-    # Disagreement or all unknown — infer from data
-    inferred = _infer_sport(activities)
+    if not unique:
+        inferred = _infer_sport(activities)
+        if verbose:
+            typer.echo(f"    Sport unknown across sources → inferred '{inferred}'")
+        return inferred
 
-    if sports:
-        labels = ", ".join(f"{a.source_platform}={a.sport}" for a in activities)
-        typer.echo(f"    Sport mismatch: {labels} → using '{inferred}'")
-    elif verbose:
-        typer.echo(f"    Sport unknown across sources → inferred '{inferred}'")
+    # Majority vote among normalized sports
+    counts: dict[str, int] = {}
+    for s in normalized:
+        counts[s] = counts.get(s, 0) + 1
+    top_count = max(counts.values())
+    winners = [s for s, c in counts.items() if c == top_count]
 
-    return inferred
+    if len(winners) == 1:
+        winner = winners[0]
+    else:
+        # Tie — prefer specific sports over vague categories
+        specific = [s for s in winners if s not in ("other", "strength")]
+        if len(specific) == 1:
+            winner = specific[0]
+        else:
+            winner = _infer_sport(activities)
+
+    labels = ", ".join(f"{a.source_platform}={a.sport}" for a in activities)
+    typer.echo(f"    Sport mismatch: {labels} → using '{winner}'")
+    return winner
 
 
 def _infer_sport(activities: list[Activity]) -> str:
