@@ -1,10 +1,14 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 START_TIME_TOLERANCE = timedelta(minutes=5)
 
 
 def find_duplicates(catalog: list[dict]) -> list[list[dict]]:
-    """Find groups of catalog entries that are likely the same activity."""
+    """Find groups of catalog entries that are likely the same activity.
+
+    Groups by overlapping time windows regardless of sport type, since
+    activities may have incorrect types attached.
+    """
     groups: list[list[dict]] = []
     used: set[str] = set()
 
@@ -20,7 +24,7 @@ def find_duplicates(catalog: list[dict]) -> list[list[dict]]:
         for b in entries[i + 1 :]:
             if b["source_file"] in used:
                 continue
-            if _is_duplicate(a, b):
+            if _overlaps(a, b):
                 group.append(b)
                 used.add(b["source_file"])
 
@@ -30,14 +34,8 @@ def find_duplicates(catalog: list[dict]) -> list[list[dict]]:
     return groups
 
 
-def _is_duplicate(a: dict, b: dict) -> bool:
-    """Two entries are duplicates if they have similar start times and sport."""
-    from datetime import datetime
-
+def _overlaps(a: dict, b: dict) -> bool:
+    """Two entries overlap if their time windows are within tolerance."""
     ta = datetime.fromisoformat(a["start_time"])
     tb = datetime.fromisoformat(b["start_time"])
-    if abs(ta - tb) > START_TIME_TOLERANCE:
-        return False
-    if a.get("sport") and b.get("sport") and a["sport"] != b["sport"]:
-        return False
-    return True
+    return abs(ta - tb) <= START_TIME_TOLERANCE

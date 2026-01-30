@@ -72,9 +72,207 @@ def status() -> None:
 
 
 @app.command()
-def process() -> None:
+def process(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show details per file"),
+    after: Optional[str] = typer.Option(None, help="After date (YYYY-MM-DD)"),
+    before: Optional[str] = typer.Option(None, help="Before date (YYYY-MM-DD)"),
+) -> None:
     """Run the dedup/merge/clean pipeline on downloaded data."""
-    typer.echo("Processing pipeline not yet implemented.")
+    import json
+    from datetime import datetime
+
+    cfg = load_config()
+    if not cfg.data_dir.exists():
+        typer.echo("Run 'fitgrabber config' first to set up the data directory.", err=True)
+        raise typer.Exit(1)
+
+    from fitgrabber.processing.anomaly import detect_anomalies
+    from fitgrabber.processing.catalog import (
+        _parse_file,
+        build_catalog,
+        save_catalog,
+    )
+    from fitgrabber.processing.dedup import find_duplicates
+    from fitgrabber.processing.merge import merge_activities
+
+    # Step 1: Build catalog
+    typer.echo("Building activity catalog...")
+    catalog = build_catalog(cfg)
+    save_catalog(cfg, catalog)
+
+    # Filter by date range
+    if after or before:
+        after_dt = datetime.fromisoformat(after) if after else None
+        before_dt = datetime.fromisoformat(before) if before else None
+        original = len(catalog)
+        catalog = _filter_by_date(catalog, after_dt, before_dt)
+        typer.echo(f"  Date filter: {len(catalog)}/{original} activities")
+
+    # Step 2: Find duplicates
+    typer.echo("Detecting duplicates...")
+    dup_groups = find_duplicates(catalog)
+    typer.echo(f"  Found {len(dup_groups)} duplicate groups")
+
+    # Step 3: Determine which entries are unique vs duplicated
+    duped_files = {e["source_file"] for group in dup_groups for e in group}
+    unique_entries = [e for e in catalog if e["source_file"] not in duped_files]
+
+    # Step 4: Process unique activities — parse, detect anomalies, save
+    typer.echo("Processing individual activities...")
+    ind_dir = cfg.processed_individual_dir()
+    ind_dir.mkdir(parents=True, exist_ok=True)
+    ind_count = 0
+    all_anomalies: list[dict] = []
+
+    for entry in unique_entries:
+        activity = _parse_file(Path(entry["source_file"]), entry["source_platform"])
+        if not activity:
+            continue
+        if verbose:
+            _log_activity(activity)
+        anomalies = detect_anomalies(activity)
+        _collect_anomalies(all_anomalies, str(activity.source_file), anomalies)
+        _save_activity_json(activity, ind_dir, anomalies)
+        ind_count += 1
+
+    # Step 5: Merge duplicate groups
+    typer.echo("Merging duplicate activities...")
+    merged_dir = cfg.processed_merged_dir()
+    merged_dir.mkdir(parents=True, exist_ok=True)
+    merged_count = 0
+
+    for group in dup_groups:
+        activities = []
+        for entry in group:
+            a = _parse_file(Path(entry["source_file"]), entry["source_platform"])
+            if a:
+                activities.append(a)
+        if len(activities) < 2:
+            if activities:
+                if verbose:
+                    _log_activity(activities[0])
+                anomalies = detect_anomalies(activities[0])
+                _collect_anomalies(all_anomalies, str(activities[0].source_file), anomalies)
+                _save_activity_json(activities[0], ind_dir, anomalies)
+                ind_count += 1
+            continue
+
+        if verbose:
+            sources = [f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities]
+            typer.echo(f"  Merging: {', '.join(sources)}")
+        merged = merge_activities(activities, verbose=verbose)
+        if verbose:
+            _log_activity(merged, prefix="    Result")
+        anomalies = detect_anomalies(merged)
+        label = "merged:" + ",".join(str(a.source_file) for a in activities)
+        _collect_anomalies(all_anomalies, label, anomalies)
+        _save_activity_json(merged, merged_dir, anomalies)
+        merged_count += 1
+
+    # Step 6: Save anomaly report
+    if all_anomalies:
+        report_path = cfg.data_dir / "processed" / "anomalies.json"
+        report_path.write_text(json.dumps(all_anomalies, indent=2, default=str))
+        warnings = sum(1 for a in all_anomalies if a["severity"] == "warning")
+        errors = sum(1 for a in all_anomalies if a["severity"] == "error")
+        typer.echo(f"  Anomalies: {errors} errors, {warnings} warnings → {report_path}")
+
+    typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged activities")
+
+
+def _filter_by_date(
+    catalog: list[dict],
+    after: object,
+    before: object,
+) -> list[dict]:
+    from datetime import datetime
+
+    filtered = []
+    for e in catalog:
+        st = e.get("start_time")
+        if not st:
+            continue
+        t = datetime.fromisoformat(st).replace(tzinfo=None)
+        if after and t < after:
+            continue
+        if before and t >= before:
+            continue
+        filtered.append(e)
+    return filtered
+
+
+def _log_activity(activity: object, prefix: str = "  ") -> None:
+    dist = f"{activity.total_distance / 1000:.1f}km" if activity.total_distance else "?km"
+    dur = f"{activity.total_duration / 60:.0f}min" if activity.total_duration else "?min"
+    name = activity.name or Path(str(activity.source_file)).name
+    typer.echo(f"{prefix} {activity.sport:12s} {dist:>8s} {dur:>6s}  {name}")
+
+
+def _collect_anomalies(dest: list[dict], file_label: str, anomalies: list) -> None:
+    for a in anomalies:
+        dest.append(
+            {
+                "file": file_label,
+                "index": a.index,
+                "reason": a.reason,
+                "severity": a.severity,
+            }
+        )
+
+
+def _save_activity_json(
+    activity: object,
+    dest_dir: Path,
+    anomalies: list | None = None,
+) -> Path:
+    """Serialize an Activity to a JSON file in dest_dir."""
+    import json
+
+    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+    name_slug = activity.sport or "activity"
+    filename = f"{ts}_{name_slug}_{activity.source_platform}.json"
+    path = dest_dir / filename
+
+    data = {
+        "source_file": str(activity.source_file),
+        "source_platform": activity.source_platform,
+        "sport": activity.sport,
+        "start_time": str(activity.start_time) if activity.start_time else None,
+        "end_time": str(activity.end_time) if activity.end_time else None,
+        "total_distance": activity.total_distance,
+        "total_duration": activity.total_duration,
+        "total_calories": activity.total_calories,
+        "avg_heart_rate": activity.avg_heart_rate,
+        "max_heart_rate": activity.max_heart_rate,
+        "avg_speed": activity.avg_speed,
+        "avg_cadence": activity.avg_cadence,
+        "avg_power": activity.avg_power,
+        "name": activity.name,
+        "metadata": activity.metadata,
+        "num_track_points": len(activity.track_points),
+        "track_points": [
+            {
+                "timestamp": str(p.timestamp),
+                "latitude": p.latitude,
+                "longitude": p.longitude,
+                "altitude": p.altitude,
+                "heart_rate": p.heart_rate,
+                "cadence": p.cadence,
+                "speed": p.speed,
+                "power": p.power,
+                "temperature": p.temperature,
+                "distance": p.distance,
+            }
+            for p in activity.track_points
+        ],
+    }
+    if anomalies:
+        data["anomalies"] = [
+            {"index": a.index, "reason": a.reason, "severity": a.severity} for a in anomalies
+        ]
+
+    path.write_text(json.dumps(data, indent=2, default=str))
+    return path
 
 
 def _sync_platform(platform: str, cfg: Config) -> None:
