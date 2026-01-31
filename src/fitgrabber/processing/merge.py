@@ -92,6 +92,8 @@ SPORT_ALIASES: dict[str, str] = {
     "backcountryski": "skiing",
     "nordicski": "skiing",
     "alpineski": "skiing",
+    "standuppaddling": "paddleboarding",
+    "stand_up_paddleboarding": "paddleboarding",
 }
 
 
