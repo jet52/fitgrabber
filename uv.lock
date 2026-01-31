@@ -42,6 +42,12 @@ wheels = [
 ]
 
 [[package]]
+name = "bitstruct"
+version = "8.11.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/33/9f094b5e32bc0927acf282199d35c384092dd73505c88fadb69292106eaf/bitstruct-8.11.1.tar.gz", hash = "sha256:4e7b8769c0f09fee403d0a5f637f8b575b191a79a92e140811aa109ce7461f0c", size = 34140, upload-time = "2020-11-19T09:30:04.021Z" }
+
+[[package]]
 name = "blessed"
 version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
@@ -180,6 +186,28 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
+name = "fit-tool"
+version = "0.9.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bitstruct" },
+    { name = "openpyxl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/b1/d23a3b8121c522471807e78b26476c42ceefc54ae547eb697b6f5a93441d/fit_tool-0.9.14.tar.gz", hash = "sha256:ae4e9a414f42be5e4eb2addb6703fd4f48dec5e281b1acfca56509c9117a0071", size = 137210, upload-time = "2026-01-28T02:21:18.638Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/e0/f189bfd3af1327096beaac22dff7d1ecf10885da3b5fd84228ee31b81e28/fit_tool-0.9.14-py3-none-any.whl", hash = "sha256:490083406fb2af097b45377255ba3f7f4c0836cfba07ba48bb9002805cb72616", size = 224167, upload-time = "2026-01-28T02:21:16.523Z" },
+]
+
+[[package]]
 name = "fitdecode"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -193,6 +221,7 @@ name = "fitgrabber"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fit-tool" },
     { name = "fitdecode" },
     { name = "garminconnect" },
     { name = "gpxpy" },
@@ -212,6 +241,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fit-tool", specifier = ">=0.9" },
     { name = "fitdecode", specifier = ">=0.10" },
     { name = "garminconnect", specifier = ">=0.2" },
     { name = "gpxpy", specifier = ">=1.6" },
@@ -305,6 +335,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "jdcal"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/b0/fa20fce23e9c3b55b640e629cb5edf32a85e6af3cf7af599940eb0c753fe/jdcal-1.4.1.tar.gz", hash = "sha256:472872e096eb8df219c23f2689fc336668bdb43d194094b5cc1707e1640acfc8", size = 7479, upload-time = "2019-04-24T10:22:15.079Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/da/572cbc0bc582390480bbd7c4e93d14dc46079778ed915b505dc494b37c57/jdcal-1.4.1-py2.py3-none-any.whl", hash = "sha256:1abf1305fce18b4e8aa248cf8fe0c56ce2032392bc64bbd61b5dff2a19ec8bba", size = 9522, upload-time = "2019-04-24T10:22:13.201Z" },
 ]
 
 [[package]]
@@ -520,6 +559,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1", size = 160065, upload-time = "2025-06-19T22:48:06.508Z" },
 ]
+
+[[package]]
+name = "openpyxl"
+version = "2.5.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+    { name = "jdcal" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/08/8a/509eb6f58672288da9a5884e1cc7e90819bc8dbef501161c4b40a6a4e46b/openpyxl-2.5.12.tar.gz", hash = "sha256:7bcf019a0be528673a8aec1e60b5c863342c3231962dbf7922fd4da42a49a91a", size = 173659, upload-time = "2018-11-29T11:29:14.739Z" }
 
 [[package]]
 name = "packaging"

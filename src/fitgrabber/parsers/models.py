@@ -18,6 +18,25 @@ class TrackPoint:
 
 
 @dataclass
+class Lap:
+    start_time: datetime
+    end_time: datetime
+    total_distance: float | None = None
+    total_duration: float | None = None
+    total_calories: int | None = None
+    avg_heart_rate: int | None = None
+    max_heart_rate: int | None = None
+    avg_speed: float | None = None
+    avg_cadence: int | None = None
+    avg_power: int | None = None
+    max_power: int | None = None
+    lap_trigger: str | None = None  # "distance", "manual", "session_end"
+    intensity: str | None = None  # "active", "rest", "interval"
+    sport: str | None = None
+    extra: dict = field(default_factory=dict)
+
+
+@dataclass
 class Activity:
     source_file: Path
     source_platform: str
@@ -25,6 +44,7 @@ class Activity:
     start_time: datetime | None = None
     end_time: datetime | None = None
     track_points: list[TrackPoint] = field(default_factory=list)
+    laps: list[Lap] = field(default_factory=list)
     total_distance: float | None = None  # meters
     total_duration: float | None = None  # seconds
     total_calories: int | None = None

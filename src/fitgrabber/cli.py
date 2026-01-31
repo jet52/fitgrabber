@@ -131,8 +131,7 @@ def process(
     existing_ts_prefixes: set[str] = set()
     if not force:
         for d in (ind_dir, merged_dir):
-            for f in d.glob("*.json"):
-                # Extract YYYYMMDD_HHMMSS prefix from filename
+            for f in list(d.glob("*.json")) + list(d.glob("*.fit")):
                 parts = f.stem.split("_", 2)
                 if len(parts) >= 2:
                     existing_ts_prefixes.add(f"{parts[0]}_{parts[1]}")
@@ -211,7 +210,7 @@ def process(
         anomalies = detect_anomalies(merged)
         label = "merged:" + ",".join(str(a.source_file) for a in activities)
         _collect_anomalies(all_anomalies, label, anomalies)
-        _save_activity_json(merged, merged_dir, anomalies)
+        _save_merged_fit(merged, merged_dir)
         merged_count += 1
 
     # Step 6: Save anomaly report
@@ -264,6 +263,18 @@ def _collect_anomalies(dest: list[dict], file_label: str, anomalies: list) -> No
                 "severity": a.severity,
             }
         )
+
+
+def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
+    """Write a merged Activity as a FIT file."""
+    from fitgrabber.export.fit_writer import write_fit
+
+    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+    name_slug = activity.sport or "activity"
+    filename = f"{ts}_{name_slug}_merged.fit"
+    path = dest_dir / filename
+    write_fit(activity, path)
+    return path
 
 
 def _save_activity_json(

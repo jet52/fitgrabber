@@ -90,8 +90,7 @@ def sync(cfg: Config, platform: str = "garmin") -> list[Path]:
     password = creds.get("password")
     if not email or not password:
         raise RuntimeError(
-            "Garmin credentials not configured. "
-            "Set platforms.garmin.email and .password in config."
+            "Garmin credentials not configured. Set platforms.garmin.email and .password in config."
         )
 
     dest = cfg.raw_dir("garmin")
@@ -125,9 +124,7 @@ def sync(cfg: Config, platform: str = "garmin") -> list[Path]:
     for activity in activities:
         activity_id = activity["activityId"]
         existing = [
-            f
-            for f in dest.glob(f"{activity_id}.*")
-            if f.suffix in (".zip", ".tcx", ".gpx")
+            f for f in dest.glob(f"{activity_id}.*") if f.suffix in (".zip", ".tcx", ".gpx")
         ]
         if existing:
             skipped += 1

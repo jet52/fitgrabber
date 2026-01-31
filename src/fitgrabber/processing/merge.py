@@ -55,6 +55,8 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
         merged.append(_merge_points(group))
         i = j
 
+    laps, lap_source = _select_laps(activities, verbose)
+
     return Activity(
         source_file=base.source_file,
         source_platform="merged",
@@ -62,6 +64,7 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
         start_time=merged[0].timestamp if merged else base.start_time,
         end_time=merged[-1].timestamp if merged else base.end_time,
         track_points=merged,
+        laps=laps,
         total_distance=max((a.total_distance or 0) for a in activities) or None,
         total_duration=max((a.total_duration or 0) for a in activities) or None,
         total_calories=max((a.total_calories or 0) for a in activities) or None,
@@ -188,6 +191,29 @@ def _infer_sport(activities: list[Activity]) -> str:
     if sport_counts:
         return max(sport_counts, key=sport_counts.get)  # type: ignore[arg-type]
     return "unknown"
+
+
+_LAP_TRIGGER_PRIORITY = {"manual": 3, "interval": 2, "distance": 1, "session_end": 0}
+
+
+def _lap_score(activity: Activity) -> int:
+    """Score an activity's lap set by quality. Higher is better."""
+    if not activity.laps:
+        return -1
+    triggers = {lap.lap_trigger for lap in activity.laps if lap.lap_trigger}
+    best = max((_LAP_TRIGGER_PRIORITY.get(t, 0) for t in triggers), default=0)
+    # Bonus for having multiple laps (not just a single session_end lap)
+    return best + (1 if len(activity.laps) > 1 else 0)
+
+
+def _select_laps(activities: list[Activity], verbose: bool) -> tuple[list, str]:
+    """Pick the best lap set from the sources."""
+    best_a = max(activities, key=_lap_score)
+    if not best_a.laps:
+        return [], ""
+    if verbose:
+        typer.echo(f"    Laps: using {best_a.source_platform} ({len(best_a.laps)} laps)")
+    return best_a.laps, best_a.source_platform
 
 
 def _merge_points(points: list[TrackPoint]) -> TrackPoint:

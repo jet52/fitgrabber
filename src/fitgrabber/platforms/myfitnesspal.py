@@ -15,8 +15,7 @@ def sync(cfg: Config, platform: str = "myfitnesspal") -> list[Path]:
     username = creds.get("username")
     if not username:
         raise RuntimeError(
-            "MyFitnessPal username not configured. "
-            "Set platforms.myfitnesspal.username in config."
+            "MyFitnessPal username not configured. Set platforms.myfitnesspal.username in config."
         )
 
     dest = cfg.raw_dir("myfitnesspal")
@@ -51,16 +50,18 @@ def sync(cfg: Config, platform: str = "myfitnesspal") -> list[Path]:
                 for meal in day_data.meals:
                     for entry in meal.entries:
                         n = entry.nutrition_information
-                        writer.writerow([
-                            meal.name,
-                            entry.name,
-                            n.get("calories", 0),
-                            n.get("carbohydrates", 0),
-                            n.get("fat", 0),
-                            n.get("protein", 0),
-                            n.get("sodium", 0),
-                            n.get("sugar", 0),
-                        ])
+                        writer.writerow(
+                            [
+                                meal.name,
+                                entry.name,
+                                n.get("calories", 0),
+                                n.get("carbohydrates", 0),
+                                n.get("fat", 0),
+                                n.get("protein", 0),
+                                n.get("sodium", 0),
+                                n.get("sugar", 0),
+                            ]
+                        )
             downloaded.append(filepath)
         except Exception:
             continue

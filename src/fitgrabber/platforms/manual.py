@@ -25,9 +25,7 @@ def sync(cfg: Config, platform: str, source_dir: Path | None = None) -> list[Pat
         typer.echo(f"  Source directory not found: {source_dir}")
         return []
 
-    all_files = [
-        f for f in source_dir.rglob("*") if f.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
+    all_files = [f for f in source_dir.rglob("*") if f.suffix.lower() in SUPPORTED_EXTENSIONS]
     typer.echo(f"  Found {len(all_files)} files in {source_dir}")
 
     imported: list[Path] = []
