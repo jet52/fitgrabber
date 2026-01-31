@@ -198,6 +198,125 @@ def _parse_fit_detail(filepath: Path) -> dict | None:
     }
 
 
+COVERAGE_FIELDS = ["GPS", "Heart Rate", "Speed", "Cadence", "Power", "Altitude", "Temperature"]
+
+_FIELD_MAP = {
+    "GPS": lambda pts: any(p.get("latitude") for p in pts),
+    "Heart Rate": lambda pts: any(p.get("heart_rate") for p in pts),
+    "Speed": lambda pts: any(p.get("speed") for p in pts),
+    "Cadence": lambda pts: any(p.get("cadence") for p in pts),
+    "Power": lambda pts: any(p.get("power") for p in pts),
+    "Altitude": lambda pts: any(p.get("altitude") for p in pts),
+    "Temperature": lambda pts: any(p.get("temperature") for p in pts),
+}
+
+
+def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
+    """Find the raw source files that were merged for a given activity.
+
+    Matches by timestamp prefix against the raw catalog.
+    """
+    from fitgrabber.processing.catalog import _parse_file, load_catalog
+
+    # Extract timestamp prefix from activity_id (e.g. "20180331_132316_running_merged")
+    parts = activity_id.split("_", 2)
+    if len(parts) < 2:
+        return []
+    ts_prefix = f"{parts[0]}_{parts[1]}"
+
+    catalog = load_catalog(cfg)
+    matches = []
+    for entry in catalog:
+        ts = entry.get("start_time")
+        if not ts:
+            continue
+        try:
+            entry_prefix = datetime.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
+        except ValueError:
+            continue
+        if entry_prefix == ts_prefix:
+            matches.append(entry)
+
+    sources = []
+    for entry in matches:
+        filepath = Path(entry["source_file"])
+        # Parse full activity to get track point coverage
+        activity = _parse_file(filepath, entry["source_platform"])
+        pts = []
+        if activity:
+            pts = [
+                {
+                    "timestamp": str(p.timestamp),
+                    "latitude": p.latitude,
+                    "longitude": p.longitude,
+                    "altitude": p.altitude,
+                    "heart_rate": p.heart_rate,
+                    "cadence": p.cadence,
+                    "speed": p.speed,
+                    "power": p.power,
+                    "temperature": p.temperature,
+                }
+                for p in activity.track_points
+            ]
+
+        coverage = {field: check(pts) for field, check in _FIELD_MAP.items()}
+
+        sources.append(
+            {
+                "source_platform": entry["source_platform"],
+                "source_file": entry["source_file"],
+                "filename": filepath.name,
+                "start_time": entry.get("start_time"),
+                "end_time": entry.get("end_time"),
+                "total_distance": entry.get("total_distance"),
+                "total_duration": entry.get("total_duration"),
+                "num_track_points": entry.get("num_track_points", 0),
+                "coverage": coverage,
+                "track_points": pts,
+            }
+        )
+    return sources
+
+
+def get_comparison_data(sources: list[dict]) -> dict | None:
+    """Build comparison data for overlapping streams across sources."""
+    if len(sources) < 2:
+        return None
+
+    stream_fields = ["heart_rate", "speed", "cadence", "power", "altitude"]
+    # Find which fields have data in at least 2 sources
+    active_fields = []
+    for field in stream_fields:
+        count = sum(1 for s in sources if s["coverage"].get(_field_display(field), False))
+        if count >= 2:
+            active_fields.append(field)
+
+    if not active_fields:
+        return None
+
+    result: dict = {"fields": active_fields, "sources": []}
+    for src in sources:
+        src_data: dict = {
+            "label": f"{src['source_platform']}: {src['filename']}",
+            "timestamps": [p["timestamp"] for p in src["track_points"]],
+        }
+        for field in active_fields:
+            src_data[field] = [p.get(field) for p in src["track_points"]]
+        result["sources"].append(src_data)
+    return result
+
+
+def _field_display(field: str) -> str:
+    return {
+        "heart_rate": "Heart Rate",
+        "speed": "Speed",
+        "cadence": "Cadence",
+        "power": "Power",
+        "altitude": "Altitude",
+        "temperature": "Temperature",
+    }.get(field, field)
+
+
 def get_dashboard_stats(activities: list[dict]) -> dict:
     """Compute dashboard summary stats from processed activities."""
     from collections import defaultdict
@@ -217,9 +336,7 @@ def get_dashboard_stats(activities: list[dict]) -> dict:
         "sports": defaultdict(int),
     }
 
-    sorted_activities = sorted(
-        activities, key=lambda e: e.get("start_time") or "", reverse=True
-    )
+    sorted_activities = sorted(activities, key=lambda e: e.get("start_time") or "", reverse=True)
     stats["recent"] = sorted_activities[:10]
 
     for entry in activities:

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Merge Sources — fitgrabber{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/activities">Activities</a></li>
+    <li class="breadcrumb-item"><a href="/activity/{{ activity_id }}">{{ activity.sport }} {{ activity.start_time | format_date }}</a></li>
+    <li class="breadcrumb-item active">Merge Sources</li>
+  </ol>
+</nav>
+
+<h3 class="mb-4">
+  <i class="bi bi-diagram-3"></i> Merge Sources
+  <small class="text-muted fs-6">{{ sources | length }} source files</small>
+</h3>
+
+{% if not sources %}
+<div class="alert alert-info">No source files found for this activity.</div>
+{% else %}
+
+<div class="card mb-4">
+  <div class="card-header">Source Files</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Platform</th>
+          <th>File</th>
+          <th>Distance</th>
+          <th>Duration</th>
+          <th>Track Points</th>
+          <th>Time Range</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for src in sources %}
+        <tr>
+          <td><span class="badge bg-secondary">{{ src.source_platform }}</span></td>
+          <td><small>{{ src.filename }}</small></td>
+          <td>{{ src.total_distance | format_distance }}</td>
+          <td>{{ src.total_duration | format_duration }}</td>
+          <td>{{ src.num_track_points }}</td>
+          <td><small>{{ src.start_time | format_datetime }} &mdash; {{ src.end_time | format_datetime }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Data Coverage</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered mb-0 text-center">
+        <thead>
+          <tr>
+            <th class="text-start">Source</th>
+            {% for field in coverage_fields %}
+            <th>{{ field }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for src in sources %}
+          <tr>
+            <td class="text-start"><span class="badge bg-secondary">{{ src.source_platform }}</span> <small>{{ src.filename }}</small></td>
+            {% for field in coverage_fields %}
+            <td>
+              {% if src.coverage.get(field) %}
+              <i class="bi bi-check-circle-fill text-success"></i>
+              {% else %}
+              <i class="bi bi-dash text-muted"></i>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+        </tbody>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Timeline</div>
+  <div class="card-body">
+    <div id="timeline-chart"></div>
+  </div>
+</div>
+
+{% if comparison_data %}
+<div class="card mb-4">
+  <div class="card-header">Data Comparison (Overlapping Streams)</div>
+  <div class="card-body">
+    {% for field in comparison_data.fields %}
+    <div id="compare-{{ field }}"></div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if sources %}
+<script>
+const sources = {{ sources_json | safe }};
+const mergedStart = new Date("{{ activity.start_time }}").getTime();
+const mergedEnd = new Date("{{ activity.end_time }}").getTime();
+
+// Timeline chart
+(function() {
+  const traces = sources.map((src, i) => ({
+    x: [new Date(src.start_time), new Date(src.end_time)],
+    y: [src.source_platform + ': ' + src.filename, src.source_platform + ': ' + src.filename],
+    mode: 'lines',
+    line: { width: 20 },
+    name: src.source_platform,
+    hovertemplate: '%{x}<extra>' + src.source_platform + '</extra>',
+  }));
+  Plotly.newPlot('timeline-chart', traces, {
+    height: 60 + sources.length * 50,
+    margin: { t: 10, r: 20, b: 40, l: 150 },
+    showlegend: false,
+    xaxis: { type: 'date' },
+    yaxis: { automargin: true },
+  }, { responsive: true, displayModeBar: false });
+})();
+
+// Comparison charts
+{% if comparison_data %}
+const comparison = {{ comparison_json | safe }};
+const colors = ['#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#e67e22'];
+comparison.fields.forEach(field => {
+  const el = document.getElementById('compare-' + field);
+  if (!el) return;
+  const traces = comparison.sources.map((src, i) => ({
+    x: src.timestamps,
+    y: src[field],
+    type: 'scattergl',
+    mode: 'lines',
+    name: src.label,
+    line: { color: colors[i % colors.length], width: 1.5 },
+  }));
+  const layout = {
+    title: { text: field.charAt(0).toUpperCase() + field.slice(1).replace('_', ' '), font: { size: 14 } },
+    height: 250,
+    margin: { t: 40, r: 20, b: 40, l: 50 },
+    xaxis: { type: 'date' },
+    hovermode: 'x unified',
+  };
+  Plotly.newPlot(el, traces, layout, { responsive: true, displayModeBar: false });
+});
+{% endif %}
+</script>
+{% endif %}
+{% endblock %}

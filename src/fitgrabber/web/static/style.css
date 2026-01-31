@@ -14,3 +14,27 @@ body {
 .js-plotly-plot .plotly .modebar {
   top: 0 !important;
 }
+
+.calendar-table td {
+  font-size: 0.85rem;
+}
+
+@media print {
+  .navbar, footer, #theme-toggle, .btn-group, .breadcrumb {
+    display: none !important;
+  }
+  .card {
+    break-inside: avoid;
+    border: 1px solid #dee2e6 !important;
+  }
+  body {
+    font-size: 12px;
+  }
+}
+
+kbd {
+  font-size: 0.75rem;
+  padding: 2px 5px;
+  background: var(--bs-tertiary-bg);
+  border-radius: 3px;
+}

@@ -1,6 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Calendar — fitgrabber{% endblock %}
 {% block content %}
-<h2 class="mb-4">Calendar</h2>
-<p class="text-muted">Coming soon — month grid with activity dots, color-coded by sport.</p>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <a href="/calendar?year={{ prev_year }}&month={{ prev_month }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-chevron-left"></i>
+  </a>
+  <h2 class="mb-0">{{ month_name }} {{ cal.year }}</h2>
+  <a href="/calendar?year={{ next_year }}&month={{ next_month }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-chevron-right"></i>
+  </a>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-bordered calendar-table">
+    <thead>
+      <tr>
+        {% for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] %}
+        <th class="text-center text-muted" style="width:14.28%">{{ day_name }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for week in cal.weeks %}
+      <tr>
+        {% for day in week %}
+        <td class="{% if not day.in_month %}text-muted bg-body-secondary{% endif %}" style="height:100px;vertical-align:top;padding:4px 6px">
+          <div class="d-flex justify-content-between">
+            <small>{{ day.date.day }}</small>
+            {% if day.count %}
+            <small class="text-muted">{{ day.distance | format_distance }}</small>
+            {% endif %}
+          </div>
+          {% for sport in day.sports %}
+          <span class="badge" style="background:{{ sport_color(sport) }};font-size:0.65rem">{{ sport }}</span>
+          {% endfor %}
+          {% if day.count > 1 %}
+          <small class="text-muted d-block">{{ day.count }} activities</small>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

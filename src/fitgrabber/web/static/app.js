@@ -6,6 +6,8 @@ const fitgrabber = {
       margin: { t: 40, r: 20, b: 40, l: 50 },
       xaxis: { title: "Time (min)" },
       hovermode: "x unified",
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
     };
   },
 
@@ -63,3 +65,53 @@ const fitgrabber = {
     L.circleMarker(coords[coords.length - 1], { radius: 6, color: "#e74c3c", fillOpacity: 1 }).addTo(map).bindPopup("Finish");
   },
 };
+
+// Dark mode toggle
+(function() {
+  const saved = localStorage.getItem("theme");
+  if (saved) document.documentElement.setAttribute("data-bs-theme", saved);
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    const icon = btn.querySelector("i");
+    const update = () => {
+      const dark = document.documentElement.getAttribute("data-bs-theme") === "dark";
+      icon.className = dark ? "bi bi-sun-fill" : "bi bi-moon-fill";
+    };
+    update();
+    btn.addEventListener("click", () => {
+      const current = document.documentElement.getAttribute("data-bs-theme");
+      const next = current === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-bs-theme", next);
+      localStorage.setItem("theme", next);
+      update();
+    });
+  });
+})();
+
+// Keyboard navigation on activity detail pages (j/k for prev/next)
+(function() {
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    // Activity list: j/k to navigate rows
+    const rows = document.querySelectorAll("table.table-hover tbody tr[onclick]");
+    if (rows.length > 0) {
+      const focused = document.querySelector("tr.table-active");
+      let idx = focused ? Array.from(rows).indexOf(focused) : -1;
+      if (e.key === "j") {
+        idx = Math.min(idx + 1, rows.length - 1);
+      } else if (e.key === "k") {
+        idx = Math.max(idx - 1, 0);
+      } else if (e.key === "Enter" && focused) {
+        focused.click();
+        return;
+      } else {
+        return;
+      }
+      rows.forEach(r => r.classList.remove("table-active"));
+      rows[idx].classList.add("table-active");
+      rows[idx].scrollIntoView({ block: "nearest" });
+    }
+  });
+})();

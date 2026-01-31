@@ -1,12 +1,17 @@
 """Flask app factory and routes for fitgrabber web UI."""
 
+from datetime import datetime
+
 from flask import Flask, render_template, request
 
 from fitgrabber.config import Config
 
 from .services import (
+    COVERAGE_FIELDS,
     get_activity_detail,
+    get_comparison_data,
     get_dashboard_stats,
+    get_merge_sources,
     get_processed_activities,
     invalidate_cache,
 )
@@ -107,15 +112,86 @@ def create_app(cfg: Config) -> Flask:
             "activity.html", activity=detail, activity_id=activity_id, is_merged=is_merged
         )
 
+    @app.route("/activity/<activity_id>/merge")
+    def merge_view(activity_id: str):
+        import json as json_mod
+
+        detail = get_activity_detail(cfg, activity_id)
+        if not detail:
+            return render_template("404.html", message="Activity not found"), 404
+        sources = get_merge_sources(cfg, activity_id)
+        comparison = get_comparison_data(sources)
+        # Strip track_points from sources_json to keep payload small for template
+        sources_lite = [{k: v for k, v in s.items() if k != "track_points"} for s in sources]
+        return render_template(
+            "merge.html",
+            activity=detail,
+            activity_id=activity_id,
+            sources=sources,
+            sources_json=json_mod.dumps(sources_lite, default=str),
+            coverage_fields=COVERAGE_FIELDS,
+            comparison_data=comparison,
+            comparison_json=json_mod.dumps(comparison, default=str) if comparison else "null",
+        )
+
     @app.route("/calendar")
     def calendar():
+        import calendar as cal_mod
+
+        from .analytics import calendar_data, sport_color
+
         activities = get_processed_activities(cfg)
-        return render_template("calendar.html", activities=activities)
+        year = request.args.get("year", type=int, default=datetime.now().year)
+        month = request.args.get("month", type=int, default=datetime.now().month)
+        cal = calendar_data(activities, year, month)
+        month_name = cal_mod.month_name[month]
+        prev_month = 12 if month == 1 else month - 1
+        prev_year = year - 1 if month == 1 else year
+        next_month = 1 if month == 12 else month + 1
+        next_year = year + 1 if month == 12 else year
+        return render_template(
+            "calendar.html",
+            cal=cal,
+            month_name=month_name,
+            prev_year=prev_year,
+            prev_month=prev_month,
+            next_year=next_year,
+            next_month=next_month,
+            sport_color=sport_color,
+        )
 
     @app.route("/analytics")
     def analytics():
+        import json as json_mod
+
+        from .analytics import (
+            hr_zone_distribution,
+            monthly_volume,
+            pace_trends,
+            personal_records,
+            streaks,
+            weekly_volume,
+        )
+
         activities = get_processed_activities(cfg)
-        return render_template("analytics.html", activities=activities)
+        streak = streaks(activities)
+        weekly = weekly_volume(activities)
+        monthly = monthly_volume(activities)
+        hr_zones = hr_zone_distribution(activities)
+        pace = pace_trends(activities)
+        prs = personal_records(activities)
+        sports = {a.get("sport", "unknown") for a in activities}
+        return render_template(
+            "analytics.html",
+            streak=streak,
+            total_count=len(activities),
+            sport_count=len(sports),
+            prs=prs,
+            weekly_json=json_mod.dumps(weekly),
+            monthly_json=json_mod.dumps(monthly),
+            hr_zones_json=json_mod.dumps(hr_zones),
+            pace_trend_json=json_mod.dumps(pace),
+        )
 
     @app.route("/api/refresh", methods=["POST"])
     def refresh():

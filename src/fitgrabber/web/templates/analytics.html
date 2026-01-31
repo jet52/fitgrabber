@@ -2,5 +2,157 @@
 {% block title %}Analytics — fitgrabber{% endblock %}
 {% block content %}
 <h2 class="mb-4">Analytics</h2>
-<p class="text-muted">Coming soon — volume trends, HR zones, performance, and PRs.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <small class="text-muted">Current Streak</small>
+        <div class="fs-3 fw-bold">{{ streak.current }} <small class="fs-6 text-muted">days</small></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <small class="text-muted">Longest Streak</small>
+        <div class="fs-3 fw-bold">{{ streak.longest }} <small class="fs-6 text-muted">days</small></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <small class="text-muted">Total Activities</small>
+        <div class="fs-3 fw-bold">{{ total_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <small class="text-muted">Sports</small>
+        <div class="fs-3 fw-bold">{{ sport_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Weekly Volume (Last Year)</div>
+  <div class="card-body">
+    <div id="chart-weekly-dist"></div>
+    <div id="chart-weekly-count"></div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Monthly Volume</div>
+  <div class="card-body">
+    <div id="chart-monthly-dist"></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">HR Zone Distribution</div>
+      <div class="card-body">
+        <div id="chart-hr-zones"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Running Pace Trend</div>
+      <div class="card-body">
+        <div id="chart-pace-trend"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if prs %}
+<div class="card mb-4">
+  <div class="card-header">Personal Records (Running)</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr><th>Distance</th><th>Time</th><th>Pace</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        {% for pr in prs %}
+        <tr>
+          <td>{{ pr.distance }}</td>
+          <td>{{ pr.time | format_duration if pr.time else "-" }}</td>
+          <td>
+            {% if pr.pace %}
+            {{ "%d:%02d"|format(pr.pace|int, ((pr.pace % 1) * 60)|int) }} /mi
+            {% else %}-{% endif %}
+          </td>
+          <td>{{ pr.date or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const weekly = {{ weekly_json | safe }};
+const monthly = {{ monthly_json | safe }};
+const hrZones = {{ hr_zones_json | safe }};
+const paceTrend = {{ pace_trend_json | safe }};
+
+const METERS_TO_MILES = 1 / 1609.344;
+const layoutBase = { height: 250, margin: { t: 30, r: 20, b: 40, l: 50 }, hovermode: 'x unified' };
+
+// Weekly distance
+Plotly.newPlot('chart-weekly-dist', [{
+  x: weekly.weeks, y: weekly.distance.map(d => d * METERS_TO_MILES),
+  type: 'bar', marker: { color: '#3498db' },
+  hovertemplate: '%{y:.1f} mi<extra></extra>',
+}], { ...layoutBase, title: { text: 'Distance (mi)', font: { size: 13 } },
+  yaxis: { title: 'miles' } }, { responsive: true, displayModeBar: false });
+
+// Weekly count
+Plotly.newPlot('chart-weekly-count', [{
+  x: weekly.weeks, y: weekly.count,
+  type: 'bar', marker: { color: '#2ecc71' },
+  hovertemplate: '%{y} activities<extra></extra>',
+}], { ...layoutBase, title: { text: 'Activity Count', font: { size: 13 } } },
+  { responsive: true, displayModeBar: false });
+
+// Monthly distance
+Plotly.newPlot('chart-monthly-dist', [{
+  x: monthly.months, y: monthly.distance.map(d => d * METERS_TO_MILES),
+  type: 'bar', marker: { color: '#e74c3c' },
+  hovertemplate: '%{y:.1f} mi<extra></extra>',
+}], { ...layoutBase, title: { text: 'Monthly Distance (mi)', font: { size: 13 } },
+  yaxis: { title: 'miles' } }, { responsive: true, displayModeBar: false });
+
+// HR Zones
+const zoneColors = ['#3498db', '#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'];
+Plotly.newPlot('chart-hr-zones', [{
+  labels: hrZones.zones, values: hrZones.minutes,
+  type: 'pie', marker: { colors: zoneColors },
+  textinfo: 'label+percent', hovertemplate: '%{label}: %{value:.0f} min<extra></extra>',
+}], { height: 300, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: false },
+  { responsive: true, displayModeBar: false });
+
+// Pace trend
+if (paceTrend.dates.length > 0) {
+  Plotly.newPlot('chart-pace-trend', [{
+    x: paceTrend.dates, y: paceTrend.pace,
+    type: 'scattergl', mode: 'markers',
+    marker: { size: 4, color: '#e74c3c', opacity: 0.6 },
+    hovertemplate: '%{y:.2f} min/mi<extra></extra>',
+  }], { ...layoutBase, title: { text: 'Pace (min/mi)', font: { size: 13 } },
+    yaxis: { title: 'min/mi', autorange: 'reversed' } },
+    { responsive: true, displayModeBar: false });
+}
+</script>
 {% endblock %}
