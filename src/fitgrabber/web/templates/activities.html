@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Activities — fitgrabber{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2>Activities <small class="text-muted fs-6">({{ activities | length }})</small></h2>
+  <div>
+    <div class="btn-group">
+      <a href="/activities" class="btn btn-sm btn-outline-secondary {% if not current_sport %}active{% endif %}">All</a>
+      {% for sport in sports %}
+      <a href="/activities?sport={{ sport }}" class="btn btn-sm btn-outline-secondary {% if current_sport == sport %}active{% endif %}">{{ sport }}</a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover">
+    <thead>
+      <tr>
+        {% for col, label in [("start_time", "Date"), ("sport", "Sport"), ("name", "Name"), ("total_distance", "Distance"), ("total_duration", "Duration"), ("avg_heart_rate", "Avg HR"), ("source_platform", "Source")] %}
+        <th>
+          <a href="/activities?sport={{ current_sport }}&sort={{ col }}&dir={% if sort_by == col and sort_dir == 'desc' %}asc{% else %}desc{% endif %}" class="text-decoration-none text-body">
+            {{ label }}
+            {% if sort_by == col %}
+            <i class="bi bi-chevron-{% if sort_dir == 'desc' %}down{% else %}up{% endif %}"></i>
+            {% endif %}
+          </a>
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in activities %}
+      <tr onclick="window.location='/activity/{{ entry.id }}'" style="cursor:pointer">
+        <td>{{ entry.start_time | format_datetime }}</td>
+        <td><span class="badge bg-primary">{{ entry.sport or "unknown" }}</span></td>
+        <td>{{ entry.name or entry.source_file.split('/')|last }}</td>
+        <td>{{ entry.total_distance | format_distance }}</td>
+        <td>{{ entry.total_duration | format_duration }}</td>
+        <td>{{ entry.avg_heart_rate or "-" }}</td>
+        <td><small class="text-muted">{{ entry.source_platform }}</small></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-muted text-center">No activities found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}{{ activity.name or activity.sport }} — fitgrabber{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/activities">Activities</a></li>
+    <li class="breadcrumb-item active">{{ activity.name or activity.sport }}</li>
+  </ol>
+</nav>
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <h3>
+      <span class="badge bg-primary me-2">{{ activity.sport }}</span>
+      {{ activity.name or "Activity" }}
+      {% if is_merged %}
+      <a href="/activity/{{ activity_id }}/merge" class="btn btn-sm btn-outline-info ms-2">
+        <i class="bi bi-diagram-3"></i> Merge Sources
+      </a>
+      {% endif %}
+    </h3>
+    <small class="text-muted">{{ activity.start_time | format_datetime }} &middot; {{ activity.source_platform }}</small>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  {% set metrics = [
+    ("Distance", activity.total_distance | format_distance),
+    ("Duration", activity.total_duration | format_duration),
+    ("Pace", activity.avg_speed | format_pace),
+    ("Avg HR", (activity.avg_heart_rate|string ~ " bpm") if activity.avg_heart_rate else "-"),
+    ("Max HR", (activity.max_heart_rate|string ~ " bpm") if activity.max_heart_rate else "-"),
+    ("Calories", activity.total_calories if activity.total_calories else "-"),
+    ("Avg Cadence", (activity.avg_cadence|string ~ " spm") if activity.avg_cadence else "-"),
+    ("Avg Power", (activity.avg_power|string ~ " W") if activity.avg_power else "-"),
+  ] %}
+  {% for label, value in metrics %}
+  <div class="col-6 col-md-3">
+    <div class="card text-center h-100">
+      <div class="card-body py-2">
+        <small class="text-muted">{{ label }}</small>
+        <div class="fs-5 fw-semibold">{{ value }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if activity.track_points %}
+  {% set has_gps = activity.track_points | selectattr("latitude") | first is defined %}
+  {% if has_gps %}
+  <div class="card mb-4">
+    <div class="card-body p-0" id="map" style="height:350px"></div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-4">
+    {% set has_hr = activity.track_points | selectattr("heart_rate") | first is defined %}
+    {% set has_speed = activity.track_points | selectattr("speed") | first is defined %}
+    {% set has_elevation = activity.track_points | selectattr("altitude") | first is defined %}
+    {% set has_power = activity.track_points | selectattr("power") | first is defined %}
+    {% set has_cadence = activity.track_points | selectattr("cadence") | first is defined %}
+
+    {% if has_hr %}
+    <div class="col-12"><div id="chart-hr"></div></div>
+    {% endif %}
+    {% if has_speed %}
+    <div class="col-12"><div id="chart-pace"></div></div>
+    {% endif %}
+    {% if has_elevation %}
+    <div class="col-12"><div id="chart-elevation"></div></div>
+    {% endif %}
+    {% if has_power %}
+    <div class="col-12"><div id="chart-power"></div></div>
+    {% endif %}
+    {% if has_cadence %}
+    <div class="col-12"><div id="chart-cadence"></div></div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if activity.laps %}
+<div class="card mb-4">
+  <div class="card-header">Laps</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>#</th><th>Distance</th><th>Duration</th><th>Avg HR</th><th>Max HR</th><th>Pace</th><th>Trigger</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for lap in activity.laps %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ lap.total_distance | format_distance }}</td>
+          <td>{{ lap.total_duration | format_duration }}</td>
+          <td>{{ lap.avg_heart_rate or "-" }}</td>
+          <td>{{ lap.max_heart_rate or "-" }}</td>
+          <td>{{ lap.avg_speed | format_pace }}</td>
+          <td><small class="text-muted">{{ lap.lap_trigger or "-" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if activity.anomalies is defined and activity.anomalies %}
+<div class="alert alert-warning">
+  <strong><i class="bi bi-exclamation-triangle"></i> Anomalies detected:</strong>
+  <ul class="mb-0 mt-1">
+    {% for a in activity.anomalies %}
+    <li>{{ a.reason }} <span class="badge bg-{{ 'danger' if a.severity == 'error' else 'warning' }}">{{ a.severity }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if activity.track_points %}
+<script>
+const points = {{ activity.track_points | tojson }};
+fitgrabber.renderActivityCharts(points);
+fitgrabber.renderMap(points);
+</script>
+{% endif %}
+{% endblock %}

@@ -72,6 +72,34 @@ def status() -> None:
 
 
 @app.command()
+def web(
+    port: int = typer.Option(5000, help="Port to serve on"),
+    host: str = typer.Option("127.0.0.1", help="Host to bind to"),
+    debug: bool = typer.Option(False, help="Enable debug mode"),
+    no_browser: bool = typer.Option(False, help="Don't open browser automatically"),
+) -> None:
+    """Launch the web UI for browsing fitness data."""
+    import threading
+    import webbrowser
+
+    from fitgrabber.web.app import create_app
+
+    cfg = load_config()
+    if not cfg.data_dir.exists():
+        typer.echo("Run 'fitgrabber config' first to set up the data directory.", err=True)
+        raise typer.Exit(1)
+
+    flask_app = create_app(cfg)
+    url = f"http://{host}:{port}"
+    typer.echo(f"Starting fitgrabber web UI at {url}")
+
+    if not no_browser:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+    flask_app.run(host=host, port=port, debug=debug)
+
+
+@app.command()
 def process(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show details per file"),
     after: Optional[str] = typer.Option(None, help="After date (YYYY-MM-DD)"),

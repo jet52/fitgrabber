@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — fitgrabber{% endblock %}
+{% block content %}
+<h2 class="mb-4">Dashboard</h2>
+
+<div class="row g-3 mb-4">
+  {% for label, period in [("This Week", stats.week), ("This Month", stats.month), ("This Year", stats.year)] %}
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted mb-2">{{ label }}</h6>
+        <div class="d-flex justify-content-between align-items-end">
+          <div>
+            <div class="fs-3 fw-bold">{{ period.count }}</div>
+            <small class="text-muted">activities</small>
+          </div>
+          <div class="text-end">
+            <div>{{ period.distance | format_distance }}</div>
+            <div>{{ period.duration | format_duration }}</div>
+          </div>
+        </div>
+        {% if period.by_sport %}
+        <div class="mt-2">
+          {% for sport, count in period.by_sport.items() %}
+          <span class="badge bg-secondary me-1">{{ sport }} {{ count }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between">
+        <span>Recent Activities</span>
+        <a href="/activities" class="text-decoration-none">View all &rarr;</a>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for entry in stats.recent %}
+        <a href="/activity/{{ entry.id }}" class="list-group-item list-group-item-action">
+          <div class="d-flex justify-content-between">
+            <div>
+              <span class="badge bg-primary me-2">{{ entry.sport or "unknown" }}</span>
+              <strong>{{ entry.name or entry.source_file.split('/')|last }}</strong>
+            </div>
+            <small class="text-muted">{{ entry.start_time | format_date }}</small>
+          </div>
+          <small class="text-muted">
+            {{ entry.total_distance | format_distance }}
+            &middot; {{ entry.total_duration | format_duration }}
+            {% if entry.avg_heart_rate %}&middot; {{ entry.avg_heart_rate }} bpm{% endif %}
+          </small>
+        </a>
+        {% else %}
+        <div class="list-group-item text-muted">No activities yet. Run <code>fitgrabber process</code> first.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">By Sport</div>
+      <div class="list-group list-group-flush">
+        {% for sport, count in stats.sports.items() | sort(attribute='1', reverse=true) %}
+        <a href="/activities?sport={{ sport }}" class="list-group-item list-group-item-action d-flex justify-content-between">
+          {{ sport }}
+          <span class="badge bg-secondary rounded-pill">{{ count }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
