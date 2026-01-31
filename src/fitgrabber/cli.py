@@ -76,6 +76,7 @@ def process(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show details per file"),
     after: Optional[str] = typer.Option(None, help="After date (YYYY-MM-DD)"),
     before: Optional[str] = typer.Option(None, help="Before date (YYYY-MM-DD)"),
+    force: bool = typer.Option(False, "--force", help="Reprocess all, ignore cache"),
 ) -> None:
     """Run the dedup/merge/clean pipeline on downloaded data."""
     import json
@@ -95,9 +96,14 @@ def process(
     from fitgrabber.processing.dedup import find_duplicates
     from fitgrabber.processing.merge import merge_activities
 
-    # Step 1: Build catalog
+    # Step 1: Build catalog (incremental — skips unchanged files)
     typer.echo("Building activity catalog...")
-    catalog = build_catalog(cfg)
+    if force:
+        # Delete existing catalog to force full rebuild
+        cat_path = cfg.catalog_path()
+        if cat_path.exists():
+            cat_path.unlink()
+    catalog, activity_cache = build_catalog(cfg)
     save_catalog(cfg, catalog)
 
     # Filter by date range
@@ -117,15 +123,50 @@ def process(
     duped_files = {e["source_file"] for group in dup_groups for e in group}
     unique_entries = [e for e in catalog if e["source_file"] not in duped_files]
 
+    # Build set of existing processed files to skip re-processing
+    ind_dir = cfg.processed_individual_dir()
+    merged_dir = cfg.processed_merged_dir()
+    ind_dir.mkdir(parents=True, exist_ok=True)
+    merged_dir.mkdir(parents=True, exist_ok=True)
+    existing_ts_prefixes: set[str] = set()
+    if not force:
+        for d in (ind_dir, merged_dir):
+            for f in d.glob("*.json"):
+                # Extract YYYYMMDD_HHMMSS prefix from filename
+                parts = f.stem.split("_", 2)
+                if len(parts) >= 2:
+                    existing_ts_prefixes.add(f"{parts[0]}_{parts[1]}")
+
+    def _get_activity(entry: dict) -> object | None:
+        """Get activity from cache or parse from file."""
+        key = entry["source_file"]
+        if key in activity_cache:
+            return activity_cache[key]
+        return _parse_file(Path(key), entry["source_platform"])
+
+    def _ts_prefix(entry: dict) -> str:
+        """Extract timestamp prefix for matching existing output files."""
+        ts = entry.get("start_time", "")
+        if ts:
+            from datetime import datetime as dt
+
+            try:
+                return dt.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
+            except ValueError:
+                pass
+        return ""
+
     # Step 4: Process unique activities — parse, detect anomalies, save
     typer.echo("Processing individual activities...")
-    ind_dir = cfg.processed_individual_dir()
-    ind_dir.mkdir(parents=True, exist_ok=True)
     ind_count = 0
+    skipped = 0
     all_anomalies: list[dict] = []
 
     for entry in unique_entries:
-        activity = _parse_file(Path(entry["source_file"]), entry["source_platform"])
+        if _ts_prefix(entry) in existing_ts_prefixes:
+            skipped += 1
+            continue
+        activity = _get_activity(entry)
         if not activity:
             continue
         if verbose:
@@ -137,14 +178,18 @@ def process(
 
     # Step 5: Merge duplicate groups
     typer.echo("Merging duplicate activities...")
-    merged_dir = cfg.processed_merged_dir()
-    merged_dir.mkdir(parents=True, exist_ok=True)
     merged_count = 0
 
     for group in dup_groups:
+        # Check if already processed (use first entry's timestamp for filename)
+        rep = group[0]
+        if _ts_prefix(rep) in existing_ts_prefixes:
+            skipped += 1
+            continue
+
         activities = []
         for entry in group:
-            a = _parse_file(Path(entry["source_file"]), entry["source_platform"])
+            a = _get_activity(entry)
             if a:
                 activities.append(a)
         if len(activities) < 2:
@@ -177,7 +222,8 @@ def process(
         errors = sum(1 for a in all_anomalies if a["severity"] == "error")
         typer.echo(f"  Anomalies: {errors} errors, {warnings} warnings → {report_path}")
 
-    typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged activities")
+    skip_msg = f", {skipped} skipped" if skipped else ""
+    typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
 
 
 def _filter_by_date(

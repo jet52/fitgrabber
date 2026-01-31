@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import zipfile
 from pathlib import Path
@@ -11,10 +12,19 @@ from fitgrabber.parsers.models import Activity
 SUPPORTED_EXTENSIONS = {".fit", ".gpx", ".tcx", ".csv", ".json", ".zip"}
 
 
-def build_catalog(cfg: Config, progress: bool = True) -> list[dict]:
-    """Scan raw/ directories and build an activity index."""
+def build_catalog(cfg: Config, progress: bool = True) -> tuple[list[dict], dict[str, Activity]]:
+    """Scan raw/ directories and build an activity index incrementally.
+
+    Returns (catalog_entries, activity_cache) where activity_cache maps
+    source_file paths to parsed Activity objects for newly parsed files.
+    """
+    existing = _index_existing_catalog(cfg)
     entries: list[dict] = []
+    cache: dict[str, Activity] = {}
+    new = 0
+    cached = 0
     errors = 0
+
     for platform in PLATFORMS:
         raw_dir = cfg.raw_dir(platform)
         if not raw_dir.exists():
@@ -25,14 +35,38 @@ def build_catalog(cfg: Config, progress: bool = True) -> list[dict]:
             if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
         )
         for f in files:
+            key = str(f)
+            mtime = os.path.getmtime(f)
+            prev = existing.pop(key, None)
+
+            if prev and prev.get("file_mtime") == mtime:
+                entries.append(prev)
+                cached += 1
+                continue
+
             activity = _parse_file(f, platform)
             if activity:
-                entries.append(_activity_to_entry(activity))
+                entry = _activity_to_entry(activity, mtime)
+                entries.append(entry)
+                cache[key] = activity
+                new += 1
             else:
                 errors += 1
+
+    removed = len(existing)
     if progress:
-        typer.echo(f"  Cataloged {len(entries)} activities ({errors} files skipped)")
-    return entries
+        typer.echo(
+            f"  Cataloged {len(entries)} activities"
+            f" ({new} new, {cached} cached, {removed} removed,"
+            f" {errors} skipped)"
+        )
+    return entries, cache
+
+
+def _index_existing_catalog(cfg: Config) -> dict[str, dict]:
+    """Load existing catalog indexed by source_file for fast lookup."""
+    entries = load_catalog(cfg)
+    return {e["source_file"]: e for e in entries}
 
 
 def save_catalog(cfg: Config, entries: list[dict]) -> None:
@@ -163,7 +197,7 @@ def _parse_strava_sport(meta: dict) -> str:
     return raw.lower()
 
 
-def _activity_to_entry(a: Activity) -> dict:
+def _activity_to_entry(a: Activity, mtime: float | None = None) -> dict:
     return {
         "source_file": str(a.source_file),
         "source_platform": a.source_platform,
@@ -173,6 +207,12 @@ def _activity_to_entry(a: Activity) -> dict:
         "total_distance": a.total_distance,
         "total_duration": a.total_duration,
         "total_calories": a.total_calories,
+        "avg_heart_rate": a.avg_heart_rate,
+        "max_heart_rate": a.max_heart_rate,
+        "avg_speed": a.avg_speed,
+        "avg_cadence": a.avg_cadence,
+        "avg_power": a.avg_power,
         "name": a.name,
         "num_track_points": len(a.track_points),
+        "file_mtime": mtime,
     }
