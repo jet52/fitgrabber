@@ -31,7 +31,20 @@ const fitgrabber = {
 
   renderActivityCharts(points) {
     const x = this.timeMinutes(points);
-    this.renderChart("chart-hr", x, points.map(p => p.heart_rate), "Heart Rate", "bpm", "#e74c3c");
+    const hrEl = document.getElementById("chart-hr");
+    const hrValues = points.map(p => p.heart_rate).filter(v => v !== null && v !== undefined);
+    if (hrEl && hrValues.length) {
+      const hrMin = Math.min(...hrValues);
+      const hrMax = Math.max(...hrValues);
+      const pad = Math.max((hrMax - hrMin) * 0.05, 2);
+      const layout = this.plotLayout("Heart Rate");
+      layout.yaxis = { title: "bpm", range: [hrMin - pad, hrMax + pad] };
+      Plotly.newPlot(hrEl, [{
+        x, y: points.map(p => p.heart_rate), type: "scattergl", mode: "lines",
+        line: { color: "#e74c3c", width: 1.5 },
+        hovertemplate: "%{y:.0f} bpm<extra></extra>",
+      }], layout, { responsive: true, displayModeBar: false });
+    }
     // Convert m/s to min/mi for pace (invert, so lower = faster shown at top)
     const pace = points.map(p => p.speed && p.speed > 0 ? (1609.344 / p.speed) / 60 : null);
     const paceEl = document.getElementById("chart-pace");
