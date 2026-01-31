@@ -46,6 +46,36 @@ def _activity_from_json(filepath: Path) -> dict | None:
     return data
 
 
+def _build_name_lookup(cfg: Config) -> dict[str, str]:
+    """Map timestamp prefixes to best activity name from raw catalog.
+
+    Prefers Strava names, then any other platform with a name.
+    """
+    from fitgrabber.processing.catalog import load_catalog
+
+    catalog = load_catalog(cfg)
+    names: dict[str, list[tuple[str, str]]] = {}  # prefix -> [(platform, name)]
+    for entry in catalog:
+        name = entry.get("name", "").strip()
+        if not name:
+            continue
+        ts = entry.get("start_time")
+        if not ts:
+            continue
+        try:
+            prefix = datetime.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
+        except ValueError:
+            continue
+        names.setdefault(prefix, []).append((entry["source_platform"], name))
+
+    result: dict[str, str] = {}
+    for prefix, candidates in names.items():
+        # Prefer strava name
+        strava = [n for p, n in candidates if p == "strava"]
+        result[prefix] = strava[0] if strava else candidates[0][1]
+    return result
+
+
 _processed_cache: dict[str, list[dict]] | None = None
 
 
@@ -59,6 +89,7 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
     if _processed_cache is not None and not force_reload:
         return _processed_cache.get("activities", [])
 
+    name_lookup = _build_name_lookup(cfg)
     activities: list[dict] = []
     seen_prefixes: set[str] = set()
 
@@ -73,6 +104,8 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
             seen_prefixes.add(prefix)
             entry = _activity_from_fit(f)
             if entry:
+                if not entry.get("name") and prefix in name_lookup:
+                    entry["name"] = name_lookup[prefix]
                 activities.append(entry)
 
     # Individual JSON files (skip if merged version exists)
@@ -88,6 +121,8 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
             seen_prefixes.add(prefix)
             entry = _activity_from_json(f)
             if entry:
+                if not entry.get("name") and prefix in name_lookup:
+                    entry["name"] = name_lookup[prefix]
                 activities.append(entry)
 
     _processed_cache = {"activities": activities}
@@ -99,8 +134,28 @@ def invalidate_cache() -> None:
     _processed_cache = None
 
 
+def _enrich_name(data: dict, cfg: Config) -> dict:
+    """Add best name from raw catalog if the activity has no name."""
+    if data.get("name"):
+        return data
+    parts = data.get("id", "").split("_", 2)
+    if len(parts) >= 2:
+        prefix = f"{parts[0]}_{parts[1]}"
+        names = _build_name_lookup(cfg)
+        if prefix in names:
+            data["name"] = names[prefix]
+    return data
+
+
 def get_activity_detail(cfg: Config, activity_id: str) -> dict | None:
     """Load full activity detail by stem ID."""
+    result = _find_activity_detail(cfg, activity_id)
+    if result:
+        _enrich_name(result, cfg)
+    return result
+
+
+def _find_activity_detail(cfg: Config, activity_id: str) -> dict | None:
     # Check individual JSON first (has track points already serialized)
     ind_dir = cfg.processed_individual_dir()
     if ind_dir.exists():
@@ -120,7 +175,7 @@ def get_activity_detail(cfg: Config, activity_id: str) -> dict | None:
             if f.stem == activity_id and f.suffix == ".fit":
                 return _parse_fit_detail(f)
 
-    # Fallback: prefix match (e.g. activity_id is timestamp prefix)
+    # Fallback: prefix match
     for d in (merged_dir, ind_dir):
         if not d.exists():
             continue
