@@ -2,18 +2,21 @@
 
 from datetime import datetime
 
-from flask import Flask, render_template, request
+from flask import Flask, redirect, render_template, request, url_for
 
 from fitgrabber.config import Config
 
 from .services import (
     COVERAGE_FIELDS,
+    delete_activity,
+    flag_activity,
     get_activity_detail,
     get_comparison_data,
     get_dashboard_stats,
     get_merge_sources,
     get_processed_activities,
     invalidate_cache,
+    unflag_activity,
 )
 
 
@@ -75,41 +78,115 @@ def create_app(cfg: Config) -> Flask:
     @app.route("/")
     def dashboard():
         activities = get_processed_activities(cfg)
-        stats = get_dashboard_stats(activities)
+        clean = [a for a in activities if not a.get("has_anomalies")]
+        stats = get_dashboard_stats(clean)
         return render_template("dashboard.html", stats=stats)
+
+    ACTIVITY_COLUMNS = [
+        ("start_time", "Date"),
+        ("sport", "Sport"),
+        ("name", "Name"),
+        ("total_distance", "Distance"),
+        ("total_duration", "Duration"),
+        ("avg_heart_rate", "Avg HR"),
+        ("source_platform", "Source"),
+        ("has_anomalies", "Anomalies"),
+    ]
 
     @app.route("/activities")
     def activities():
+        from collections import defaultdict
+
         all_activities = get_processed_activities(cfg)
         sport_filter = request.args.get("sport", "")
+        sub_sport_filter = request.args.get("sub_sport", "")
+        anomalies_filter = request.args.get("anomalies", "")
         sort_by = request.args.get("sort", "start_time")
         sort_dir = request.args.get("dir", "desc")
 
         filtered = all_activities
         if sport_filter:
             filtered = [e for e in filtered if e.get("sport") == sport_filter]
+            if sub_sport_filter:
+                filtered = [e for e in filtered if e.get("sub_sport") == sub_sport_filter]
+        if anomalies_filter == "yes":
+            filtered = [e for e in filtered if e.get("has_anomalies")]
+        elif anomalies_filter == "no":
+            filtered = [e for e in filtered if not e.get("has_anomalies")]
 
-        reverse = sort_dir == "desc"
-        filtered = sorted(filtered, key=lambda e: e.get(sort_by) or "", reverse=reverse)
+        def sort_key(e: dict) -> object:
+            v = e.get(sort_by)
+            if v is None:
+                return ""
+            if isinstance(v, bool):
+                return int(v)
+            return v
 
+        filtered = sorted(filtered, key=sort_key, reverse=(sort_dir == "desc"))
+
+        # Build category list and subcategory map
         sports = sorted({e.get("sport", "unknown") for e in all_activities})
+        sub_sports: dict[str, list[str]] = defaultdict(set)
+        for e in all_activities:
+            s = e.get("sub_sport")
+            if s:
+                sub_sports[e.get("sport", "unknown")].add(s)
+        sub_sports_sorted = {k: sorted(v) for k, v in sub_sports.items()}
+
+        # Helper to build query strings preserving current filters
+        def filter_qs(**overrides: str) -> str:
+            params = {
+                "sport": sport_filter,
+                "sub_sport": sub_sport_filter,
+                "anomalies": anomalies_filter,
+                "sort": sort_by,
+                "dir": sort_dir,
+            }
+            params.update(overrides)
+            return "&".join(f"{k}={v}" for k, v in params.items() if v)
+
+        def sort_qs(col: str) -> str:
+            new_dir = "asc" if sort_by == col and sort_dir == "desc" else "desc"
+            return filter_qs(sort=col, dir=new_dir)
+
         return render_template(
             "activities.html",
             activities=filtered,
             sports=sports,
+            sub_sports=sub_sports_sorted,
+            columns=ACTIVITY_COLUMNS,
             current_sport=sport_filter,
+            current_sub_sport=sub_sport_filter,
+            current_anomalies=anomalies_filter,
             sort_by=sort_by,
             sort_dir=sort_dir,
+            filter_qs=filter_qs,
+            sort_qs=sort_qs,
         )
 
     @app.route("/activity/<activity_id>")
     def activity_detail_view(activity_id: str):
+        from .fitness import activity_metrics
+
         detail = get_activity_detail(cfg, activity_id)
         if not detail:
             return render_template("404.html", message="Activity not found"), 404
         is_merged = "_merged" in str(detail.get("source_file", ""))
+        training_metrics = activity_metrics(detail)
+        # Check if flagged as anomaly
+        from .services import _build_anomaly_prefixes
+
+        anomaly_prefixes = _build_anomaly_prefixes(cfg)
+        parts = activity_id.split("_", 2)
+        prefix = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else activity_id
+        is_flagged = prefix in anomaly_prefixes
         return render_template(
-            "activity.html", activity=detail, activity_id=activity_id, is_merged=is_merged
+            "activity.html",
+            activity=detail,
+            activity_id=activity_id,
+            is_merged=is_merged,
+            training_metrics=training_metrics,
+            is_flagged=is_flagged,
         )
 
     @app.route("/activity/<activity_id>/merge")
@@ -172,26 +249,56 @@ def create_app(cfg: Config) -> Flask:
             streaks,
             weekly_volume,
         )
+        from .fitness import (
+            aggregate_fitness,
+            best_efforts,
+            pace_distribution,
+            training_load,
+        )
 
-        activities = get_processed_activities(cfg)
-        streak = streaks(activities)
-        weekly = weekly_volume(activities)
-        monthly = monthly_volume(activities)
-        hr_zones = hr_zone_distribution(activities)
-        pace = pace_trends(activities)
-        prs = personal_records(activities)
-        sports = {a.get("sport", "unknown") for a in activities}
+        all_activities = get_processed_activities(cfg)
+        clean = [a for a in all_activities if not a.get("has_anomalies")]
+        streak = streaks(all_activities)
+        weekly = weekly_volume(clean)
+        monthly = monthly_volume(clean)
+        hr_zones = hr_zone_distribution(clean)
+        pace = pace_trends(clean)
+        prs = personal_records(clean)
+        sports = {a.get("sport", "unknown") for a in all_activities}
+        fitness = aggregate_fitness(clean)
+        load = training_load(clean)
+        efforts = best_efforts(clean)
+        pace_dist = pace_distribution(clean)
         return render_template(
             "analytics.html",
             streak=streak,
-            total_count=len(activities),
+            total_count=len(all_activities),
             sport_count=len(sports),
             prs=prs,
             weekly_json=json_mod.dumps(weekly),
             monthly_json=json_mod.dumps(monthly),
             hr_zones_json=json_mod.dumps(hr_zones),
             pace_trend_json=json_mod.dumps(pace),
+            fitness_json=json_mod.dumps(fitness),
+            load_json=json_mod.dumps(load),
+            efforts=efforts.get("efforts", []),
+            pace_dist_json=json_mod.dumps(pace_dist),
         )
+
+    @app.route("/api/activity/<activity_id>/flag", methods=["POST"])
+    def flag_activity_view(activity_id: str):
+        flag_activity(cfg, activity_id)
+        return redirect(url_for("activity_detail_view", activity_id=activity_id))
+
+    @app.route("/api/activity/<activity_id>/unflag", methods=["POST"])
+    def unflag_activity_view(activity_id: str):
+        unflag_activity(cfg, activity_id)
+        return redirect(url_for("activity_detail_view", activity_id=activity_id))
+
+    @app.route("/api/activity/<activity_id>/delete", methods=["POST"])
+    def delete_activity_view(activity_id: str):
+        delete_activity(cfg, activity_id)
+        return redirect(url_for("activities"))
 
     @app.route("/api/refresh", methods=["POST"])
     def refresh():

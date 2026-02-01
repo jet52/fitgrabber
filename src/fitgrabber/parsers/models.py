@@ -53,6 +53,7 @@ class Activity:
     avg_speed: float | None = None  # m/s
     avg_cadence: int | None = None
     avg_power: int | None = None
+    hr_source: str | None = None  # "chest", "wrist", or None
     name: str = ""
     notes: str = ""
     metadata: dict = field(default_factory=dict)

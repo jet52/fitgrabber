@@ -12,17 +12,22 @@ def sync(cfg: Config, platform: str = "myfitnesspal") -> list[Path]:
     import myfitnesspal
 
     creds = cfg.platforms.get("myfitnesspal", {})
-    username = creds.get("username")
-    if not username:
-        raise RuntimeError(
-            "MyFitnessPal username not configured. Set platforms.myfitnesspal.username in config."
-        )
+    username = creds.get("username", "")
 
     dest = cfg.raw_dir("myfitnesspal")
     dest.mkdir(parents=True, exist_ok=True)
 
-    typer.echo(f"  Logging in as {username}...")
-    client = myfitnesspal.Client(username)
+    typer.echo(f"  Logging in as {username or '(from browser cookies)'}...")
+    try:
+        import browser_cookie3
+
+        cj = browser_cookie3.chrome(domain_name=".myfitnesspal.com")
+        client = myfitnesspal.Client(cookiejar=cj)
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not authenticate with MyFitnessPal: {e}\n"
+            "Make sure you are logged in to myfitnesspal.com in Chrome."
+        ) from e
 
     downloaded: list[Path] = []
     today = date.today()

@@ -16,14 +16,15 @@
     <thead>
       <tr>
         {% for day_name in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] %}
-        <th class="text-center text-muted" style="width:14.28%">{{ day_name }}</th>
+        <th class="text-center text-muted" style="width:12.5%">{{ day_name }}</th>
         {% endfor %}
+        <th class="text-center text-muted" style="width:12.5%">Week</th>
       </tr>
     </thead>
     <tbody>
       {% for week in cal.weeks %}
       <tr>
-        {% for day in week %}
+        {% for day in week.days %}
         <td class="{% if not day.in_month %}text-muted bg-body-secondary{% endif %}" style="height:100px;vertical-align:top;padding:4px 6px">
           <div class="d-flex justify-content-between">
             <small>{{ day.date.day }}</small>
@@ -31,17 +32,39 @@
             <small class="text-muted">{{ day.distance | format_distance }}</small>
             {% endif %}
           </div>
-          {% for sport in day.sports %}
-          <span class="badge" style="background:{{ sport_color(sport) }};font-size:0.65rem">{{ sport }}</span>
+          {% if day.count == 1 %}
+          <a href="/activity/{{ day.activities[0].id }}" class="text-decoration-none">
+            <span class="badge" style="background:{{ sport_color(day.sports[0]) }};font-size:0.65rem">{{ day.sports[0] }}</span>
+          </a>
+          {% else %}
+          {% for act in day.activities %}
+          <a href="/activity/{{ act.id }}" class="text-decoration-none">
+            <span class="badge" style="background:{{ sport_color(act.sport | default('unknown')) }};font-size:0.65rem">{{ act.sport | default('unknown') }}</span>
+          </a>
           {% endfor %}
-          {% if day.count > 1 %}
-          <small class="text-muted d-block">{{ day.count }} activities</small>
           {% endif %}
         </td>
         {% endfor %}
+        <td class="text-center align-middle bg-body-tertiary" style="height:100px;padding:4px 6px">
+          {% if week.count %}
+          <div><strong>{{ week.distance | format_distance }}</strong></div>
+          <small class="text-muted">{{ week.duration | format_duration }}</small>
+          <small class="text-muted d-block">{{ week.count }} act.</small>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
+    <tfoot>
+      <tr class="table-active">
+        <td colspan="7" class="text-end pe-3"><strong>Month Total</strong></td>
+        <td class="text-center">
+          <div><strong>{{ cal.month_totals.distance | format_distance }}</strong></div>
+          <small class="text-muted">{{ cal.month_totals.duration | format_duration }}</small>
+          <small class="text-muted d-block">{{ cal.month_totals.count }} act.</small>
+        </td>
+      </tr>
+    </tfoot>
   </table>
 </div>
 {% endblock %}

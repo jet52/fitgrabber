@@ -3,19 +3,94 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fitgrabber.config import Config
 
+# Module-level caches, all cleared together via invalidate_cache().
+_cache: dict[str, Any] | None = None
 
-def _activity_from_fit(filepath: Path) -> dict | None:
-    """Parse a processed FIT file into a summary dict (no track points)."""
-    from fitgrabber.processing.catalog import _parse_file
 
-    a = _parse_file(filepath, "merged")
-    if not a:
+def _get_cache() -> dict[str, Any]:
+    global _cache
+    if _cache is None:
+        _cache = {}
+    return _cache
+
+
+def invalidate_cache() -> None:
+    global _cache
+    _cache = None
+
+
+def _cached_catalog(cfg: Config) -> list[dict]:
+    """Load catalog once per cache lifetime."""
+    c = _get_cache()
+    if "catalog" not in c:
+        from fitgrabber.processing.catalog import load_catalog
+
+        c["catalog"] = load_catalog(cfg)
+    return c["catalog"]
+
+
+def _cached_file_to_prefix(cfg: Config) -> dict[str, str]:
+    """Map raw file paths to timestamp prefixes, cached."""
+    c = _get_cache()
+    if "file_to_prefix" not in c:
+        mapping: dict[str, str] = {}
+        for entry in _cached_catalog(cfg):
+            ts = entry.get("start_time")
+            if not ts:
+                continue
+            try:
+                prefix = datetime.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
+            except ValueError:
+                continue
+            mapping[entry["source_file"]] = prefix
+        c["file_to_prefix"] = mapping
+    return c["file_to_prefix"]
+
+
+def _summary_cache_path(cfg: Config) -> Path:
+    return cfg.data_dir / "processed" / ".fit_summaries.json"
+
+
+def _load_summary_cache(cfg: Config) -> dict[str, dict]:
+    path = _summary_cache_path(cfg)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return {e["id"]: e for e in data}
+    except (json.JSONDecodeError, OSError, KeyError):
+        return {}
+
+
+def _save_summary_cache(cfg: Config, summaries: dict[str, dict]) -> None:
+    path = _summary_cache_path(cfg)
+    path.write_text(json.dumps(list(summaries.values()), indent=2, default=str))
+
+
+def _activity_from_fit(filepath: Path, summary_cache: dict[str, dict]) -> dict | None:
+    """Parse a processed FIT file into a summary dict (no track points).
+
+    Uses a disk cache to avoid re-parsing FIT files on every server start.
+    """
+    stem = filepath.stem
+    mtime = filepath.stat().st_mtime
+
+    cached = summary_cache.get(stem)
+    if cached and cached.get("_mtime") == mtime:
+        return {k: v for k, v in cached.items() if not k.startswith("_")}
+
+    from fitgrabber.parsers.fit_parser import parse_summary
+
+    try:
+        a = parse_summary(filepath, "merged")
+    except Exception:
         return None
-    return {
-        "id": filepath.stem,
+    entry = {
+        "id": stem,
         "source_file": str(filepath),
         "source_platform": a.source_platform,
         "sport": a.sport,
@@ -32,6 +107,8 @@ def _activity_from_fit(filepath: Path) -> dict | None:
         "name": a.name,
         "num_track_points": len(a.track_points),
     }
+    summary_cache[stem] = {**entry, "_mtime": mtime}
+    return entry
 
 
 def _activity_from_json(filepath: Path) -> dict | None:
@@ -41,20 +118,21 @@ def _activity_from_json(filepath: Path) -> dict | None:
     except (json.JSONDecodeError, OSError):
         return None
     data["id"] = filepath.stem
+    data["has_anomalies"] = bool(data.get("anomalies"))
     data.pop("track_points", None)
     data.pop("metadata", None)
+    data.pop("anomalies", None)
     return data
 
 
 def _build_name_lookup(cfg: Config) -> dict[str, str]:
-    """Map timestamp prefixes to best activity name from raw catalog.
+    """Map timestamp prefixes to best activity name from raw catalog."""
+    c = _get_cache()
+    if "name_lookup" in c:
+        return c["name_lookup"]
 
-    Prefers Strava names, then any other platform with a name.
-    """
-    from fitgrabber.processing.catalog import load_catalog
-
-    catalog = load_catalog(cfg)
-    names: dict[str, list[tuple[str, str]]] = {}  # prefix -> [(platform, name)]
+    catalog = _cached_catalog(cfg)
+    names: dict[str, list[tuple[str, str]]] = {}
     for entry in catalog:
         name = entry.get("name", "").strip()
         if not name:
@@ -70,13 +148,45 @@ def _build_name_lookup(cfg: Config) -> dict[str, str]:
 
     result: dict[str, str] = {}
     for prefix, candidates in names.items():
-        # Prefer strava name
         strava = [n for p, n in candidates if p == "strava"]
         result[prefix] = strava[0] if strava else candidates[0][1]
+    c["name_lookup"] = result
     return result
 
 
-_processed_cache: dict[str, list[dict]] | None = None
+def _build_anomaly_prefixes(cfg: Config) -> set[str]:
+    """Load anomalies.json and return timestamp prefixes of anomalous activities."""
+    c = _get_cache()
+    if "anomaly_prefixes" in c:
+        return c["anomaly_prefixes"]
+
+    anom_path = cfg.data_dir / "processed" / "anomalies.json"
+    if not anom_path.exists():
+        c["anomaly_prefixes"] = set()
+        return c["anomaly_prefixes"]
+    try:
+        anoms = json.loads(anom_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        c["anomaly_prefixes"] = set()
+        return c["anomaly_prefixes"]
+
+    file_to_prefix = _cached_file_to_prefix(cfg)
+
+    prefixes: set[str] = set()
+    for a in anoms:
+        file_label = a["file"]
+        if file_label.startswith("prefix:"):
+            prefixes.add(file_label[7:])
+        elif file_label.startswith("merged:"):
+            paths = file_label[7:].split(",")
+            for p in paths:
+                if p in file_to_prefix:
+                    prefixes.add(file_to_prefix[p])
+                    break
+        elif file_label in file_to_prefix:
+            prefixes.add(file_to_prefix[file_label])
+    c["anomaly_prefixes"] = prefixes
+    return prefixes
 
 
 def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[dict]:
@@ -85,11 +195,16 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
     Merged activities take priority — if a timestamp prefix exists in merged/,
     skip any individual/ file with the same prefix.
     """
-    global _processed_cache
-    if _processed_cache is not None and not force_reload:
-        return _processed_cache.get("activities", [])
+    if force_reload:
+        invalidate_cache()
+    c = _get_cache()
+    if "activities" in c:
+        return c["activities"]
 
     name_lookup = _build_name_lookup(cfg)
+    anomaly_prefixes = _build_anomaly_prefixes(cfg)
+    summary_cache = _load_summary_cache(cfg)
+    summary_cache_dirty = False
     activities: list[dict] = []
     seen_prefixes: set[str] = set()
 
@@ -102,10 +217,14 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
             parts = f.stem.split("_", 2)
             prefix = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else f.stem
             seen_prefixes.add(prefix)
-            entry = _activity_from_fit(f)
+            old_len = len(summary_cache)
+            entry = _activity_from_fit(f, summary_cache)
+            if len(summary_cache) != old_len:
+                summary_cache_dirty = True
             if entry:
                 if not entry.get("name") and prefix in name_lookup:
                     entry["name"] = name_lookup[prefix]
+                entry["has_anomalies"] = prefix in anomaly_prefixes
                 activities.append(entry)
 
     # Individual JSON files (skip if merged version exists)
@@ -123,15 +242,25 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
             if entry:
                 if not entry.get("name") and prefix in name_lookup:
                     entry["name"] = name_lookup[prefix]
+                entry["has_anomalies"] = entry.get("has_anomalies") or prefix in anomaly_prefixes
                 activities.append(entry)
 
-    _processed_cache = {"activities": activities}
+    if summary_cache_dirty:
+        _save_summary_cache(cfg, summary_cache)
+
+    # Normalize sport names and fill derivable stats
+    from fitgrabber.processing.sports import normalize_sport
+
+    for a in activities:
+        cat, sub = normalize_sport(a.get("sport", "unknown"))
+        a["sport"] = cat
+        a["sub_sport"] = sub
+        # Derive avg_speed from distance/duration if missing
+        if not a.get("avg_speed") and a.get("total_distance") and a.get("total_duration"):
+            a["avg_speed"] = a["total_distance"] / a["total_duration"]
+
+    c["activities"] = activities
     return activities
-
-
-def invalidate_cache() -> None:
-    global _processed_cache
-    _processed_cache = None
 
 
 def _enrich_name(data: dict, cfg: Config) -> dict:
@@ -147,11 +276,52 @@ def _enrich_name(data: dict, cfg: Config) -> dict:
     return data
 
 
+def _fill_missing_stats(data: dict) -> dict:
+    """Compute missing summary stats from track points when available."""
+    pts = data.get("track_points")
+    if not pts or len(pts) < 2:
+        return data
+
+    def _avg(field: str) -> float | None:
+        vals = [p[field] for p in pts if p.get(field) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    if not data.get("avg_heart_rate"):
+        data["avg_heart_rate"] = _avg("heart_rate")
+    if not data.get("max_heart_rate"):
+        vals = [p["heart_rate"] for p in pts if p.get("heart_rate") is not None]
+        data["max_heart_rate"] = max(vals) if vals else None
+    if not data.get("avg_speed"):
+        data["avg_speed"] = _avg("speed")
+    if not data.get("avg_cadence"):
+        data["avg_cadence"] = _avg("cadence")
+    if not data.get("avg_power"):
+        data["avg_power"] = _avg("power")
+
+    # Compute total_distance from last track point distance field if missing
+    if not data.get("total_distance"):
+        dists = [p["distance"] for p in pts if p.get("distance") is not None]
+        if dists:
+            data["total_distance"] = max(dists)
+
+    # Compute total_duration from timestamps if missing
+    if not data.get("total_duration"):
+        try:
+            t0 = datetime.fromisoformat(pts[0]["timestamp"])
+            t1 = datetime.fromisoformat(pts[-1]["timestamp"])
+            data["total_duration"] = (t1 - t0).total_seconds()
+        except (ValueError, KeyError):
+            pass
+
+    return data
+
+
 def get_activity_detail(cfg: Config, activity_id: str) -> dict | None:
     """Load full activity detail by stem ID."""
     result = _find_activity_detail(cfg, activity_id)
     if result:
         _enrich_name(result, cfg)
+        _fill_missing_stats(result)
     return result
 
 
@@ -271,7 +441,7 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
 
     Matches by timestamp prefix against the raw catalog.
     """
-    from fitgrabber.processing.catalog import _parse_file, load_catalog
+    from fitgrabber.processing.catalog import _parse_file
 
     # Extract timestamp prefix from activity_id (e.g. "20180331_132316_running_merged")
     parts = activity_id.split("_", 2)
@@ -279,7 +449,7 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
         return []
     ts_prefix = f"{parts[0]}_{parts[1]}"
 
-    catalog = load_catalog(cfg)
+    catalog = _cached_catalog(cfg)
     matches = []
     for entry in catalog:
         ts = entry.get("start_time")
@@ -359,6 +529,69 @@ def get_comparison_data(sources: list[dict]) -> dict | None:
             src_data[field] = [p.get(field) for p in src["track_points"]]
         result["sources"].append(src_data)
     return result
+
+
+def _activity_prefix(activity_id: str) -> str:
+    parts = activity_id.split("_", 2)
+    return f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else activity_id
+
+
+def _anomalies_path(cfg: Config) -> Path:
+    return cfg.data_dir / "processed" / "anomalies.json"
+
+
+def _load_anomalies(cfg: Config) -> list[dict]:
+    path = _anomalies_path(cfg)
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_anomalies(cfg: Config, anoms: list[dict]) -> None:
+    path = _anomalies_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(anoms, indent=2))
+
+
+def flag_activity(cfg: Config, activity_id: str) -> None:
+    prefix = _activity_prefix(activity_id)
+    anoms = _load_anomalies(cfg)
+    # Don't duplicate
+    if any(a["file"] == f"prefix:{prefix}" for a in anoms):
+        return
+    anoms.append({
+        "file": f"prefix:{prefix}",
+        "reasons": [{"reason": "Manually flagged via web UI", "severity": "warning"}],
+    })
+    _save_anomalies(cfg, anoms)
+    invalidate_cache()
+
+
+def unflag_activity(cfg: Config, activity_id: str) -> None:
+    prefix = _activity_prefix(activity_id)
+    anoms = _load_anomalies(cfg)
+    anoms = [a for a in anoms if a["file"] != f"prefix:{prefix}"]
+    _save_anomalies(cfg, anoms)
+    invalidate_cache()
+
+
+def delete_activity(cfg: Config, activity_id: str) -> None:
+    # Remove processed files matching this ID
+    for d in (cfg.processed_merged_dir(), cfg.processed_individual_dir()):
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if f.stem == activity_id:
+                f.unlink()
+    # Remove from anomalies if present
+    prefix = _activity_prefix(activity_id)
+    anoms = _load_anomalies(cfg)
+    anoms = [a for a in anoms if a["file"] != f"prefix:{prefix}"]
+    _save_anomalies(cfg, anoms)
+    invalidate_cache()
 
 
 def _field_display(field: str) -> str:

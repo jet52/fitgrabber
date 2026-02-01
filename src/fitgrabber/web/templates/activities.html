@@ -3,12 +3,28 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2>Activities <small class="text-muted fs-6">({{ activities | length }})</small></h2>
-  <div>
-    <div class="btn-group">
-      <a href="/activities" class="btn btn-sm btn-outline-secondary {% if not current_sport %}active{% endif %}">All</a>
-      {% for sport in sports %}
-      <a href="/activities?sport={{ sport }}" class="btn btn-sm btn-outline-secondary {% if current_sport == sport %}active{% endif %}">{{ sport }}</a>
-      {% endfor %}
+  <div class="d-flex gap-2 align-items-center flex-wrap">
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+        {% if current_sport %}{{ current_sport }}{% if current_sub_sport %} › {{ current_sub_sport }}{% endif %}{% else %}All Sports{% endif %}
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item {% if not current_sport %}active{% endif %}" href="/activities?{{ filter_qs(sport='', sub_sport='') }}">All Sports</a></li>
+        <li><hr class="dropdown-divider"></li>
+        {% for sport in sports %}
+        <li><a class="dropdown-item fw-semibold {% if current_sport == sport and not current_sub_sport %}active{% endif %}" href="/activities?{{ filter_qs(sport=sport, sub_sport='') }}">{{ sport }}</a></li>
+        {% if sport in sub_sports %}
+        {% for sub in sub_sports[sport] %}
+        <li><a class="dropdown-item ps-4 {% if current_sport == sport and current_sub_sport == sub %}active{% endif %}" href="/activities?{{ filter_qs(sport=sport, sub_sport=sub) }}">├ {{ sub }}</a></li>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="btn-group btn-group-sm">
+      <a href="/activities?{{ filter_qs(anomalies='') }}" class="btn btn-outline-secondary {% if not current_anomalies %}active{% endif %}">All</a>
+      <a href="/activities?{{ filter_qs(anomalies='yes') }}" class="btn btn-outline-warning {% if current_anomalies == 'yes' %}active{% endif %}">Anomalies</a>
+      <a href="/activities?{{ filter_qs(anomalies='no') }}" class="btn btn-outline-success {% if current_anomalies == 'no' %}active{% endif %}">Clean</a>
     </div>
   </div>
 </div>
@@ -17,9 +33,9 @@
   <table class="table table-hover">
     <thead>
       <tr>
-        {% for col, label in [("start_time", "Date"), ("sport", "Sport"), ("name", "Name"), ("total_distance", "Distance"), ("total_duration", "Duration"), ("avg_heart_rate", "Avg HR"), ("source_platform", "Source")] %}
+        {% for col, label in columns %}
         <th>
-          <a href="/activities?sport={{ current_sport }}&sort={{ col }}&dir={% if sort_by == col and sort_dir == 'desc' %}asc{% else %}desc{% endif %}" class="text-decoration-none text-body">
+          <a href="/activities?{{ sort_qs(col) }}" class="text-decoration-none text-body">
             {{ label }}
             {% if sort_by == col %}
             <i class="bi bi-chevron-{% if sort_dir == 'desc' %}down{% else %}up{% endif %}"></i>
@@ -33,15 +49,22 @@
       {% for entry in activities %}
       <tr onclick="window.location='/activity/{{ entry.id }}'" style="cursor:pointer">
         <td>{{ entry.start_time | format_datetime }}</td>
-        <td><span class="badge bg-primary">{{ entry.sport or "unknown" }}</span></td>
-        <td>{{ entry.name or entry.source_file.split('/')|last }}</td>
+        <td><span class="badge bg-primary">{{ entry.sport or "unknown" }}{% if entry.sub_sport %} <small>({{ entry.sub_sport }})</small>{% endif %}</span></td>
+        <td>{{ entry.name or "-" }}</td>
         <td>{{ entry.total_distance | format_distance }}</td>
         <td>{{ entry.total_duration | format_duration }}</td>
         <td>{{ entry.avg_heart_rate or "-" }}</td>
         <td><small class="text-muted">{{ entry.source_platform }}</small></td>
+        <td>
+          {% if entry.has_anomalies %}
+          <span class="badge bg-warning text-dark">Yes</span>
+          {% else %}
+          <span class="text-muted">No</span>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-muted text-center">No activities found.</td></tr>
+      <tr><td colspan="8" class="text-muted text-center">No activities found.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -8,38 +8,65 @@
   </ol>
 </nav>
 
+{% if is_flagged %}
+<div class="alert alert-warning d-flex align-items-center justify-content-between mb-3">
+  <div><i class="bi bi-exclamation-triangle-fill me-2"></i><strong>This activity is flagged as anomalous</strong> and excluded from analytics.</div>
+  <form method="post" action="/api/activity/{{ activity_id }}/unflag" class="ms-3">
+    <button type="submit" class="btn btn-sm btn-outline-warning">Unflag</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <div class="col-12">
-    <h3>
-      <span class="badge bg-primary me-2">{{ activity.sport }}</span>
-      {{ activity.name or "Activity" }}
-      {% if is_merged %}
-      <a href="/activity/{{ activity_id }}/merge" class="btn btn-sm btn-outline-info ms-2">
-        <i class="bi bi-diagram-3"></i> Merge Sources
-      </a>
-      {% endif %}
-    </h3>
-    <small class="text-muted">{{ activity.start_time | format_datetime }} &middot; {{ activity.source_platform }}</small>
+    <div class="d-flex align-items-start justify-content-between">
+      <div>
+        <h3>
+          <span class="badge bg-primary me-2">{{ activity.sport }}</span>
+          {{ activity.name or "Activity" }}
+          {% if is_merged %}
+          <a href="/activity/{{ activity_id }}/merge" class="btn btn-sm btn-outline-info ms-2">
+            <i class="bi bi-diagram-3"></i> Merge Sources
+          </a>
+          {% endif %}
+        </h3>
+        <small class="text-muted">{{ activity.start_time | format_datetime }} &middot; {{ activity.source_platform }}</small>
+      </div>
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          Actions
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          {% if is_flagged %}
+          <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#unflagModal">Unflag anomaly</a></li>
+          {% else %}
+          <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#flagModal">Flag as anomaly</a></li>
+          {% endif %}
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item text-danger" href="#" data-bs-toggle="modal" data-bs-target="#deleteModal">Delete activity</a></li>
+        </ul>
+      </div>
+    </div>
   </div>
 </div>
 
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="metric-cards">
   {% set metrics = [
-    ("Distance", activity.total_distance | format_distance),
-    ("Duration", activity.total_duration | format_duration),
-    ("Pace", activity.avg_speed | format_pace),
-    ("Avg HR", (activity.avg_heart_rate|string ~ " bpm") if activity.avg_heart_rate else "-"),
-    ("Max HR", (activity.max_heart_rate|string ~ " bpm") if activity.max_heart_rate else "-"),
-    ("Calories", activity.total_calories if activity.total_calories else "-"),
-    ("Avg Cadence", (activity.avg_cadence|string ~ " spm") if activity.avg_cadence else "-"),
-    ("Avg Power", (activity.avg_power|string ~ " W") if activity.avg_power else "-"),
+    ("distance", "Distance", activity.total_distance | format_distance),
+    ("duration", "Duration", activity.total_duration | format_duration),
+    ("pace", "Pace", activity.avg_speed | format_pace),
+    ("avg_hr", "Avg HR", (activity.avg_heart_rate|round|int|string ~ " bpm") if activity.avg_heart_rate else "-"),
+    ("max_hr", "Max HR", (activity.max_heart_rate|round|int|string ~ " bpm") if activity.max_heart_rate else "-"),
+    ("calories", "Calories", activity.total_calories|round|int if activity.total_calories else "-"),
+    ("avg_cadence", "Avg Cadence", (activity.avg_cadence|round|int|string ~ " spm") if activity.avg_cadence else "-"),
+    ("avg_power", "Avg Power", (activity.avg_power|round|int|string ~ " W") if activity.avg_power else "-"),
   ] %}
-  {% for label, value in metrics %}
+  {% for key, label, value in metrics %}
   <div class="col-6 col-md-3">
     <div class="card text-center h-100">
       <div class="card-body py-2">
         <small class="text-muted">{{ label }}</small>
-        <div class="fs-5 fw-semibold">{{ value }}</div>
+        <div class="fs-5 fw-semibold" id="metric-{{ key }}">{{ value }}</div>
       </div>
     </div>
   </div>
@@ -79,6 +106,90 @@
   </div>
 {% endif %}
 
+{% if training_metrics %}
+<div class="card mb-4">
+  <div class="card-header">Training Metrics</div>
+  <div class="card-body">
+    <div class="row g-3">
+      {% if training_metrics.efficiency_factor is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Ratio of speed to heart rate. Higher means better aerobic fitness — you're moving faster per heartbeat.<br><a href='https://www.trainingpeaks.com/learn/articles/efficiency-factor-and-decoupling/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Efficiency Factor <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%.4f"|format(training_metrics.efficiency_factor) }}</span>
+        <br><small class="text-muted">speed/HR</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.cardiac_cost is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Total heartbeats per mile. Lower is more efficient — your heart does less work per unit distance.<br><a href='https://www.uphillathlete.com/heart-rate-drift/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Cardiac Cost <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%.0f"|format(training_metrics.cardiac_cost) }}</span>
+        <br><small class="text-muted">beats/mi</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.decoupling_pct is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="How much your efficiency drops from the 1st to 2nd half. Under 5% = strong aerobic base. Over 10% = aerobic system needs work.<br><a href='https://www.trainingpeaks.com/learn/articles/efficiency-factor-and-decoupling/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Aerobic Decoupling <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold {% if training_metrics.decoupling_pct > 10 %}text-warning{% elif training_metrics.decoupling_pct < 5 %}text-success{% endif %}">
+          {{ "%.1f"|format(training_metrics.decoupling_pct) }}%
+        </span>
+        <br><small class="text-muted">{% if training_metrics.decoupling_pct < 5 %}good{% elif training_metrics.decoupling_pct < 10 %}moderate{% else %}needs work{% endif %}</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.cardiac_drift_pct is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Percentage change in heart rate from the 1st to 2nd half at similar effort. Positive = HR rose (fatigue or dehydration). Near zero = good pacing.<br><a href='https://www.uphillathlete.com/heart-rate-drift/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Cardiac Drift <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%+.1f"|format(training_metrics.cardiac_drift_pct) }}%</span>
+        <br><small class="text-muted">HR 1st→2nd half</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.pace_drift_pct is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="How much you slowed down from the 1st to 2nd half. Positive = slower in the 2nd half. Negative = negative split (faster finish).<br><a href='https://www.runnersworld.com/training/a20812952/negative-splits/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Pace Drift <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%+.1f"|format(training_metrics.pace_drift_pct) }}%</span>
+        <br><small class="text-muted">slowdown</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.running_effectiveness is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Speed gained per watt of power. Higher means more of your power output translates into forward motion rather than vertical oscillation.<br><a href='https://blog.stryd.com/2020/01/10/how-to-use-running-effectiveness/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Running Effectiveness <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%.4f"|format(training_metrics.running_effectiveness) }}</span>
+        <br><small class="text-muted">m/s per W</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.power_hr_ratio is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Watts produced per heartbeat. Higher indicates better cardiovascular efficiency — more mechanical output for the same cardiac effort.<br><a href='https://blog.stryd.com/2019/12/10/power-heart-rate-ratio/' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">Power:HR <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%.2f"|format(training_metrics.power_hr_ratio) }}</span>
+        <br><small class="text-muted">W/bpm</small>
+      </div>
+      {% endif %}
+      {% if training_metrics.trimp is defined %}
+      <div class="col-6 col-md-3 text-center" role="button" tabindex="0"
+        data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-html="true"
+        data-bs-content="Training Impulse — a single number combining duration and intensity (HR). Higher means more training stress. Used to track load over time.<br><a href='https://fellrnr.com/wiki/TRIMP' target='_blank'>Learn more</a>">
+        <small class="text-muted d-block">TRIMP <i class="bi bi-info-circle"></i></small>
+        <span class="fs-5 fw-semibold">{{ "%.0f"|format(training_metrics.trimp) }}</span>
+        <br><small class="text-muted">training impulse</small>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if activity.laps %}
 <div class="card mb-4">
   <div class="card-header">Laps</div>
@@ -107,6 +218,42 @@
 </div>
 {% endif %}
 
+<!-- Flag confirmation modal -->
+<div class="modal fade" id="flagModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Flag as anomaly</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">This will exclude the activity from analytics. It will still appear in the activities list. Continue?</div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <form method="post" action="/api/activity/{{ activity_id }}/flag"><button type="submit" class="btn btn-warning">Flag</button></form>
+    </div>
+  </div></div>
+</div>
+
+<!-- Unflag confirmation modal -->
+<div class="modal fade" id="unflagModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Remove anomaly flag</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">This will include the activity in analytics again. Continue?</div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <form method="post" action="/api/activity/{{ activity_id }}/unflag"><button type="submit" class="btn btn-primary">Unflag</button></form>
+    </div>
+  </div></div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title text-danger">Delete activity</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">This will permanently delete the processed file. Raw data is not affected. This cannot be undone. Continue?</div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <form method="post" action="/api/activity/{{ activity_id }}/delete"><button type="submit" class="btn btn-danger">Delete</button></form>
+    </div>
+  </div></div>
+</div>
+
 {% if activity.anomalies is defined and activity.anomalies %}
 <div class="alert alert-warning">
   <strong><i class="bi bi-exclamation-triangle"></i> Anomalies detected:</strong>
@@ -121,6 +268,12 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+// Initialize Bootstrap popovers
+document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => {
+  new bootstrap.Popover(el, { container: 'body' });
+});
+</script>
 {% if activity.track_points %}
 <script>
 const points = {{ activity.track_points | tojson }};

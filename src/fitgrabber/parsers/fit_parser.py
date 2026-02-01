@@ -9,13 +9,17 @@ def parse(filepath: Path, platform: str = "unknown") -> Activity:
     activity = Activity(source_file=filepath, source_platform=platform)
     points: list[TrackPoint] = []
     laps: list[Lap] = []
+    hr_source: str | None = None
 
     with fitdecode.FitReader(str(filepath)) as fit:
         for frame in fit:
             if not isinstance(frame, fitdecode.FitDataMessage):
                 continue
 
-            if frame.name == "session":
+            if frame.name == "device_info" and hr_source is None:
+                hr_source = _detect_hr_source(frame)
+
+            elif frame.name == "session":
                 activity.sport = _get_field(frame, "sport", "unknown")
                 activity.start_time = _get_field(frame, "start_time")
                 activity.total_distance = _get_field(frame, "total_distance")
@@ -52,10 +56,64 @@ def parse(filepath: Path, platform: str = "unknown") -> Activity:
 
     activity.track_points = points
     activity.laps = laps
+    activity.hr_source = hr_source
     if points:
         activity.start_time = activity.start_time or points[0].timestamp
         activity.end_time = points[-1].timestamp
     return activity
+
+
+def parse_summary(filepath: Path, platform: str = "unknown") -> Activity:
+    """Parse only session-level metadata from a FIT file, skipping track points."""
+    activity = Activity(source_file=filepath, source_platform=platform)
+    num_points = 0
+
+    with fitdecode.FitReader(str(filepath)) as fit:
+        for frame in fit:
+            if not isinstance(frame, fitdecode.FitDataMessage):
+                continue
+            if frame.name == "session":
+                activity.sport = _get_field(frame, "sport", "unknown")
+                activity.start_time = _get_field(frame, "start_time")
+                activity.total_distance = _get_field(frame, "total_distance")
+                activity.total_duration = _get_field(frame, "total_elapsed_time")
+                activity.total_calories = _get_field(frame, "total_calories")
+                activity.avg_heart_rate = _get_field(frame, "avg_heart_rate")
+                activity.max_heart_rate = _get_field(frame, "max_heart_rate")
+                activity.avg_speed = _get_field(frame, "avg_speed")
+                activity.avg_cadence = _get_field(frame, "avg_cadence")
+                activity.avg_power = _get_field(frame, "avg_power")
+                activity.end_time = _get_field(frame, "timestamp")
+            elif frame.name == "record":
+                num_points += 1
+
+    activity.track_points = [None] * num_points  # type: ignore[list-item]
+    return activity
+
+
+def _detect_hr_source(frame: fitdecode.FitDataMessage) -> str | None:
+    """Detect HR sensor type from device_info message.
+
+    ANT+ or BLE device_type 120 = HR strap ("chest").
+    source_type == "local" with no ANT/BLE = built-in optical ("wrist").
+    """
+    device_type = _get_field(frame, "device_type")
+    ant_device_type = _get_field(frame, "ant_device_type")
+    source_type = _get_field(frame, "source_type")
+
+    # device_type 120 is heart_rate monitor in ANT+ profile
+    dt = device_type if device_type is not None else ant_device_type
+    if dt is not None:
+        dt_val = int(dt) if not isinstance(dt, int) else dt
+        if dt_val == 120:
+            # External HR strap (ANT+ or BLE)
+            return "chest"
+
+    # If source_type indicates local/built-in sensor with HR capability
+    if source_type is not None and str(source_type) == "local":
+        return "wrist"
+
+    return None
 
 
 _RUNNING_DYNAMICS_FIELDS = (

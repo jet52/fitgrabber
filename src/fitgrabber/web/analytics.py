@@ -24,8 +24,14 @@ def calendar_data(activities: list[dict], year: int, month: int) -> dict:
             continue
 
     grid = []
+    month_dist = 0.0
+    month_dur = 0.0
+    month_count = 0
     for week in weeks:
         row = []
+        week_dist = 0.0
+        week_dur = 0.0
+        week_count = 0
         for day in week:
             key = str(day)
             day_acts = by_date.get(key, [])
@@ -43,9 +49,21 @@ def calendar_data(activities: list[dict], year: int, month: int) -> dict:
                     "sports": sports,
                 }
             )
-        grid.append(row)
+            if day.month == month:
+                week_dist += dist
+                week_dur += dur
+                week_count += len(day_acts)
+        grid.append({"days": row, "distance": week_dist, "duration": week_dur, "count": week_count})
+        month_dist += week_dist
+        month_dur += week_dur
+        month_count += week_count
 
-    return {"year": year, "month": month, "weeks": grid}
+    return {
+        "year": year,
+        "month": month,
+        "weeks": grid,
+        "month_totals": {"distance": month_dist, "duration": month_dur, "count": month_count},
+    }
 
 
 SPORT_COLORS: dict[str, str] = {
@@ -196,6 +214,8 @@ def personal_records(activities: list[dict]) -> list[dict]:
         best_pace = None
         for a in activities:
             if a.get("sport") != "running":
+                continue
+            if a.get("has_anomalies"):
                 continue
             dist = a.get("total_distance")
             dur = a.get("total_duration")

@@ -38,66 +38,116 @@
   </div>
 </div>
 
-<div class="card mb-4">
-  <div class="card-header">Weekly Volume (Last Year)</div>
-  <div class="card-body">
-    <div id="chart-weekly-dist"></div>
-    <div id="chart-weekly-count"></div>
-  </div>
-</div>
+<ul class="nav nav-tabs mb-4" role="tablist">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-volume">Volume</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-fitness">Fitness</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-training">Training Load</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-records">Records</a></li>
+</ul>
 
-<div class="card mb-4">
-  <div class="card-header">Monthly Volume</div>
-  <div class="card-body">
-    <div id="chart-monthly-dist"></div>
-  </div>
-</div>
+<div class="tab-content">
 
-<div class="row g-3 mb-4">
-  <div class="col-md-6">
-    <div class="card">
-      <div class="card-header">HR Zone Distribution</div>
-      <div class="card-body">
-        <div id="chart-hr-zones"></div>
+<!-- Volume Tab -->
+<div class="tab-pane fade show active" id="tab-volume">
+  <div class="card mb-4">
+    <div class="card-header">Weekly Volume (Last Year)</div>
+    <div class="card-body">
+      <div id="chart-weekly-dist"></div>
+      <div id="chart-weekly-count"></div>
+    </div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-header">Monthly Volume</div>
+    <div class="card-body"><div id="chart-monthly-dist"></div></div>
+  </div>
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">HR Zone Distribution</div>
+        <div class="card-body"><div id="chart-hr-zones"></div></div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">Pace Zone Distribution</div>
+        <div class="card-body"><div id="chart-pace-zones"></div></div>
       </div>
     </div>
   </div>
-  <div class="col-md-6">
-    <div class="card">
-      <div class="card-header">Running Pace Trend</div>
-      <div class="card-body">
-        <div id="chart-pace-trend"></div>
-      </div>
-    </div>
+</div>
+
+<!-- Fitness Tab -->
+<div class="tab-pane fade" id="tab-fitness">
+  <div class="card mb-4">
+    <div class="card-header">Efficiency Factor Trend (Running)</div>
+    <div class="card-body"><div id="chart-ef-trend"></div></div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-header">Cardiac Cost Trend (beats/mile)</div>
+    <div class="card-body"><div id="chart-cc-trend"></div></div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-header">Running Pace Trend</div>
+    <div class="card-body"><div id="chart-pace-trend"></div></div>
   </div>
 </div>
 
-{% if prs %}
-<div class="card mb-4">
-  <div class="card-header">Personal Records (Running)</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0">
-      <thead>
-        <tr><th>Distance</th><th>Time</th><th>Pace</th><th>Date</th></tr>
-      </thead>
-      <tbody>
-        {% for pr in prs %}
-        <tr>
-          <td>{{ pr.distance }}</td>
-          <td>{{ pr.time | format_duration if pr.time else "-" }}</td>
-          <td>
-            {% if pr.pace %}
-            {{ "%d:%02d"|format(pr.pace|int, ((pr.pace % 1) * 60)|int) }} /mi
-            {% else %}-{% endif %}
-          </td>
-          <td>{{ pr.date or "-" }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<!-- Training Load Tab -->
+<div class="tab-pane fade" id="tab-training">
+  <div class="card mb-4">
+    <div class="card-header">Training Load (TRIMP-based ATL / CTL)</div>
+    <div class="card-body"><div id="chart-training-load"></div></div>
+  </div>
+  <div class="card mb-4">
+    <div class="card-header">Acute:Chronic Ratio</div>
+    <div class="card-body"><div id="chart-acr"></div></div>
   </div>
 </div>
-{% endif %}
+
+<!-- Records Tab -->
+<div class="tab-pane fade" id="tab-records">
+  {% if efforts %}
+  <div class="card mb-4">
+    <div class="card-header">Best Efforts (Running)</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Duration</th><th>Pace</th><th>Date</th></tr></thead>
+        <tbody>
+          {% for e in efforts %}
+          <tr>
+            <td>{{ e.duration }}</td>
+            <td>{% if e.pace %}{{ "%d:%02d"|format(e.pace|int, ((e.pace % 1) * 60)|int) }} /mi{% else %}-{% endif %}</td>
+            <td>{{ e.date or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+  {% if prs %}
+  <div class="card mb-4">
+    <div class="card-header">Personal Records (Running)</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Distance</th><th>Time</th><th>Pace</th><th>Date</th></tr></thead>
+        <tbody>
+          {% for pr in prs %}
+          <tr>
+            <td>{{ pr.distance }}</td>
+            <td>{{ pr.time | format_duration if pr.time else "-" }}</td>
+            <td>{% if pr.pace %}{{ "%d:%02d"|format(pr.pace|int, ((pr.pace % 1) * 60)|int) }} /mi{% else %}-{% endif %}</td>
+            <td>{{ pr.date or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+</div><!-- tab-content -->
 {% endblock %}
 
 {% block scripts %}
@@ -106,6 +156,9 @@ const weekly = {{ weekly_json | safe }};
 const monthly = {{ monthly_json | safe }};
 const hrZones = {{ hr_zones_json | safe }};
 const paceTrend = {{ pace_trend_json | safe }};
+const fitness = {{ fitness_json | safe }};
+const load = {{ load_json | safe }};
+const paceDist = {{ pace_dist_json | safe }};
 
 const METERS_TO_MILES = 1 / 1609.344;
 const layoutBase = { height: 250, margin: { t: 30, r: 20, b: 40, l: 50 }, hovermode: 'x unified' };
@@ -143,6 +196,39 @@ Plotly.newPlot('chart-hr-zones', [{
 }], { height: 300, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: false },
   { responsive: true, displayModeBar: false });
 
+// Pace zone distribution
+const paceZoneColors = ['#1a5276', '#2471a3', '#2ecc71', '#f1c40f', '#e67e22', '#e74c3c', '#922b21'];
+Plotly.newPlot('chart-pace-zones', [{
+  labels: paceDist.zones, values: paceDist.minutes,
+  type: 'pie', marker: { colors: paceZoneColors },
+  textinfo: 'label+percent', hovertemplate: '%{label}: %{value:.0f} min<extra></extra>',
+}], { height: 300, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: false },
+  { responsive: true, displayModeBar: false });
+
+// Fitness: EF trend
+if (fitness.ef_trend.length > 0) {
+  Plotly.newPlot('chart-ef-trend', [{
+    x: fitness.ef_trend.map(p => p.date), y: fitness.ef_trend.map(p => p.value),
+    type: 'scattergl', mode: 'markers+lines',
+    marker: { size: 4, color: '#2ecc71', opacity: 0.7 },
+    line: { width: 1, color: '#2ecc71' },
+    hovertemplate: '%{y:.5f}<extra></extra>',
+  }], { ...layoutBase, title: { text: 'Efficiency Factor (speed/HR)', font: { size: 13 } } },
+    { responsive: true, displayModeBar: false });
+}
+
+// Fitness: Cardiac cost trend
+if (fitness.cardiac_cost_trend.length > 0) {
+  Plotly.newPlot('chart-cc-trend', [{
+    x: fitness.cardiac_cost_trend.map(p => p.date), y: fitness.cardiac_cost_trend.map(p => p.value),
+    type: 'scattergl', mode: 'markers+lines',
+    marker: { size: 4, color: '#e74c3c', opacity: 0.7 },
+    line: { width: 1, color: '#e74c3c' },
+    hovertemplate: '%{y:.0f} beats/mi<extra></extra>',
+  }], { ...layoutBase, title: { text: 'Cardiac Cost (beats/mile)', font: { size: 13 } },
+    yaxis: { title: 'beats/mi' } }, { responsive: true, displayModeBar: false });
+}
+
 // Pace trend
 if (paceTrend.dates.length > 0) {
   Plotly.newPlot('chart-pace-trend', [{
@@ -154,5 +240,39 @@ if (paceTrend.dates.length > 0) {
     yaxis: { title: 'min/mi', autorange: 'reversed' } },
     { responsive: true, displayModeBar: false });
 }
+
+// Training load
+if (load.dates.length > 0) {
+  Plotly.newPlot('chart-training-load', [
+    { x: load.dates, y: load.daily_trimp, type: 'bar', name: 'Daily TRIMP',
+      marker: { color: '#3498db', opacity: 0.3 }, hovertemplate: '%{y:.0f}<extra>Daily</extra>' },
+    { x: load.dates, y: load.atl, type: 'scatter', mode: 'lines', name: 'ATL (7d)',
+      line: { color: '#e74c3c', width: 2 }, hovertemplate: '%{y:.1f}<extra>ATL</extra>' },
+    { x: load.dates, y: load.ctl, type: 'scatter', mode: 'lines', name: 'CTL (42d)',
+      line: { color: '#2ecc71', width: 2 }, hovertemplate: '%{y:.1f}<extra>CTL</extra>' },
+  ], { ...layoutBase, height: 300, legend: { orientation: 'h', y: 1.1 } },
+    { responsive: true, displayModeBar: false });
+
+  Plotly.newPlot('chart-acr', [{
+    x: load.dates, y: load.acr,
+    type: 'scatter', mode: 'lines', line: { color: '#9b59b6', width: 2 },
+    hovertemplate: '%{y:.2f}<extra></extra>',
+  }, {
+    x: load.dates, y: load.dates.map(() => 1.5),
+    type: 'scatter', mode: 'lines', line: { color: '#e74c3c', width: 1, dash: 'dash' },
+    showlegend: false, hoverinfo: 'skip',
+  }], { ...layoutBase, title: { text: 'ACR (>1.5 = injury risk)', font: { size: 13 } },
+    yaxis: { title: 'ratio' },
+    shapes: [{ type: 'rect', x0: load.dates[0], x1: load.dates[load.dates.length-1],
+      y0: 0.8, y1: 1.3, fillcolor: '#2ecc71', opacity: 0.1, line: { width: 0 } }]
+  }, { responsive: true, displayModeBar: false });
+}
+
+// Render charts in hidden tabs when shown
+document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
+  tab.addEventListener('shown.bs.tab', () => {
+    window.dispatchEvent(new Event('resize'));
+  });
+});
 </script>
 {% endblock %}
