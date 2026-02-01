@@ -9,6 +9,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 PLATFORMS = [
     "garmin",
+    "garmin-health",
     "strava",
     "coros",
     "suunto",

@@ -73,7 +73,7 @@ def status() -> None:
 
 @app.command()
 def web(
-    port: int = typer.Option(5000, help="Port to serve on"),
+    port: int = typer.Option(8741, help="Port to serve on"),
     host: str = typer.Option("127.0.0.1", help="Host to bind to"),
     debug: bool = typer.Option(False, help="Enable debug mode"),
     no_browser: bool = typer.Option(False, help="Don't open browser automatically"),
@@ -365,6 +365,8 @@ def _sync_platform(platform: str, cfg: Config) -> None:
     # Lazy imports to avoid loading all platform deps at startup
     if platform == "garmin":
         from fitgrabber.platforms.garmin import sync as do_sync
+    elif platform == "garmin-health":
+        from fitgrabber.platforms.garmin_health import sync as do_sync
     elif platform == "strava":
         from fitgrabber.platforms.strava import sync as do_sync
     elif platform == "myfitnesspal":
