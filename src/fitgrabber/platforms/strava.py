@@ -196,6 +196,8 @@ def _fetch_activity_with_retry(
                 "elapsed_time": _to_seconds(detail.elapsed_time),
                 "moving_time": _to_seconds(detail.moving_time),
                 "distance": float(detail.distance) if detail.distance else 0,
+                "device_name": getattr(detail, "device_name", None),
+                "external_id": getattr(detail, "external_id", None),
             }
 
             try:
@@ -290,3 +292,71 @@ def sync(cfg: Config, platform: str = "strava") -> list[Path]:
     typer.echo(f"    Downloaded: {len(downloaded)}")
     typer.echo(f"    Already had: {skipped}")
     return downloaded
+
+
+def backfill_device_info(cfg: Config) -> int:
+    """Add device_name/external_id to existing Strava JSON files missing them."""
+    from stravalib.client import Client
+
+    token = _get_access_token(cfg)
+    dest = cfg.raw_dir("strava")
+    if not dest.exists():
+        typer.echo("  No strava directory found.")
+        return 0
+
+    client = Client(access_token=token)
+    rate = _RateTracker()
+
+    # Find files missing device_name
+    needs_update = []
+    for f in sorted(dest.iterdir()):
+        if f.suffix != ".json":
+            continue
+        data = json.loads(f.read_text())
+        if "device_name" not in data:
+            needs_update.append((f, data))
+
+    if not needs_update:
+        typer.echo("  All files already have device info.")
+        return 0
+
+    typer.echo(f"  {len(needs_update)} files need device info backfill.")
+    updated = 0
+
+    try:
+        for i, (filepath, data) in enumerate(needs_update, 1):
+            activity_id = data.get("id")
+            if not activity_id:
+                continue
+            name = data.get("name", "unnamed")
+            typer.echo(f"  [{i}/{len(needs_update)}] {name} ({activity_id})")
+
+            time.sleep(DELAY_BETWEEN_ACTIVITIES)
+            try:
+                rate.wait_if_needed()
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(REQUEST_TIMEOUT)
+                detail = client.get_activity(activity_id)
+                signal.alarm(0)
+                rate.record()
+
+                data["device_name"] = getattr(detail, "device_name", None)
+                data["external_id"] = getattr(detail, "external_id", None)
+                filepath.write_text(json.dumps(data, indent=2, default=str))
+                updated += 1
+            except _Timeout:
+                signal.alarm(0)
+                typer.echo("    Timed out, skipping.")
+            except Exception as e:
+                signal.alarm(0)
+                if _is_rate_limit(e):
+                    wait = 15 * 60
+                    typer.echo(f"    Rate limited. Waiting {wait // 60} minutes...")
+                    time.sleep(wait)
+                else:
+                    typer.echo(f"    Failed: {e}")
+    except KeyboardInterrupt:
+        typer.echo("\n  Interrupted! Progress saved.")
+
+    typer.echo(f"  Updated {updated}/{len(needs_update)} files.")
+    return updated

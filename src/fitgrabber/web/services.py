@@ -189,11 +189,31 @@ def _build_anomaly_prefixes(cfg: Config) -> set[str]:
     return prefixes
 
 
+def _prefix_to_ts(prefix: str) -> datetime | None:
+    """Parse a YYYYMMDD_HHMMSS prefix into a datetime."""
+    try:
+        return datetime.strptime(prefix, "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+def _near_any(prefix: str, seen: set[str], tolerance_s: int = 300) -> bool:
+    """Check if a timestamp prefix is within tolerance of any seen prefix."""
+    ts = _prefix_to_ts(prefix)
+    if not ts:
+        return False
+    for s in seen:
+        other = _prefix_to_ts(s)
+        if other and abs((ts - other).total_seconds()) <= tolerance_s:
+            return True
+    return False
+
+
 def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[dict]:
     """Load all processed activities (merged + individual, deduplicated).
 
     Merged activities take priority — if a timestamp prefix exists in merged/,
-    skip any individual/ file with the same prefix.
+    skip any individual/ file with a similar timestamp (within 5 min tolerance).
     """
     if force_reload:
         invalidate_cache()
@@ -227,7 +247,7 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
                 entry["has_anomalies"] = prefix in anomaly_prefixes
                 activities.append(entry)
 
-    # Individual JSON files (skip if merged version exists)
+    # Individual JSON files (skip if merged version exists with similar timestamp)
     ind_dir = cfg.processed_individual_dir()
     if ind_dir.exists():
         for f in sorted(ind_dir.iterdir()):
@@ -235,7 +255,7 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
                 continue
             parts = f.stem.split("_", 2)
             prefix = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else f.stem
-            if prefix in seen_prefixes:
+            if prefix in seen_prefixes or _near_any(prefix, seen_prefixes):
                 continue
             seen_prefixes.add(prefix)
             entry = _activity_from_json(f)
@@ -439,7 +459,8 @@ _FIELD_MAP = {
 def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
     """Find the raw source files that were merged for a given activity.
 
-    Matches by timestamp prefix against the raw catalog.
+    Matches by timestamp proximity (within 5 min) against the raw catalog,
+    since different sources may have slightly different start times.
     """
     from fitgrabber.processing.catalog import _parse_file
 
@@ -448,6 +469,11 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
     if len(parts) < 2:
         return []
     ts_prefix = f"{parts[0]}_{parts[1]}"
+    activity_ts = _prefix_to_ts(ts_prefix)
+    if not activity_ts:
+        return []
+
+    tolerance_s = 300  # 5 minutes, same as dedup tolerance
 
     catalog = _cached_catalog(cfg)
     matches = []
@@ -456,10 +482,10 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
         if not ts:
             continue
         try:
-            entry_prefix = datetime.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
+            entry_ts = datetime.fromisoformat(ts).replace(tzinfo=None)
         except ValueError:
             continue
-        if entry_prefix == ts_prefix:
+        if abs((entry_ts - activity_ts).total_seconds()) <= tolerance_s:
             matches.append(entry)
 
     sources = []

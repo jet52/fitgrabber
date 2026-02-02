@@ -100,6 +100,25 @@ def web(
 
 
 @app.command()
+def backfill_strava(
+    ctx: typer.Context,
+) -> None:
+    """Backfill device_name/external_id into existing Strava JSON files."""
+    cfg = load_config()
+    if not cfg.data_dir.exists():
+        typer.echo("Run 'fitgrabber config' first.", err=True)
+        raise typer.Exit(1)
+
+    from fitgrabber.platforms.strava import backfill_device_info
+
+    updated = backfill_device_info(cfg)
+    if updated:
+        typer.echo(
+            "Run 'fitgrabber process --force' to rebuild with updated device info."
+        )
+
+
+@app.command()
 def process(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show details per file"),
     after: Optional[str] = typer.Option(None, help="After date (YYYY-MM-DD)"),
@@ -156,6 +175,10 @@ def process(
     merged_dir = cfg.processed_merged_dir()
     ind_dir.mkdir(parents=True, exist_ok=True)
     merged_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean up stale individual files whose activities are now in merge groups
+    if force:
+        _clean_stale_individuals(ind_dir, dup_groups, verbose)
     existing_ts_prefixes: set[str] = set()
     if not force:
         for d in (ind_dir, merged_dir):
@@ -251,6 +274,60 @@ def process(
 
     skip_msg = f", {skipped} skipped" if skipped else ""
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
+
+
+def _clean_stale_individuals(
+    ind_dir: Path, dup_groups: list[list[dict]], verbose: bool
+) -> None:
+    """Remove individual files whose activities now belong to a merge group.
+
+    When --force reprocesses, an activity that was previously unique (saved as
+    individual) may now have a matching source and belong to a dup group.
+    The merge produces a new merged file, but the old individual lingers.
+    """
+    from datetime import datetime, timedelta
+
+    if not ind_dir.exists():
+        return
+
+    # Collect all timestamps from dup groups (these will become merged files)
+    dup_timestamps: list[datetime] = []
+    for group in dup_groups:
+        for entry in group:
+            ts = entry.get("start_time")
+            if ts:
+                try:
+                    dup_timestamps.append(datetime.fromisoformat(ts))
+                except ValueError:
+                    pass
+
+    if not dup_timestamps:
+        return
+
+    tolerance = timedelta(minutes=5)
+    removed = 0
+    for f in list(ind_dir.iterdir()):
+        if f.suffix != ".json":
+            continue
+        parts = f.stem.split("_", 2)
+        if len(parts) < 2:
+            continue
+        try:
+            file_ts = datetime.strptime(f"{parts[0]}_{parts[1]}", "%Y%m%d_%H%M%S")
+        except ValueError:
+            continue
+        # Check if this individual's timestamp is close to any dup group entry
+        for dt in dup_timestamps:
+            dt_naive = dt.replace(tzinfo=None)
+            if abs(file_ts - dt_naive) <= tolerance:
+                if verbose:
+                    typer.echo(f"  Removing stale individual: {f.name}")
+                f.unlink()
+                removed += 1
+                break
+
+    if removed:
+        typer.echo(f"  Cleaned {removed} stale individual file(s)")
 
 
 def _filter_by_date(

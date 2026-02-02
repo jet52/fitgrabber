@@ -167,6 +167,11 @@ def _parse_strava_json(filepath: Path, platform: str) -> Activity | None:
         )
 
     sport = _parse_strava_sport(meta)
+    original_device = _detect_strava_device(data)
+    metadata = {}
+    if original_device:
+        metadata["device_name"] = data.get("device_name", "")
+        metadata["original_platform"] = original_device
     return Activity(
         source_file=filepath,
         source_platform=platform,
@@ -181,7 +186,46 @@ def _parse_strava_json(filepath: Path, platform: str) -> Activity | None:
         max_heart_rate=meta.get("max_heartrate"),
         avg_speed=meta.get("average_speed"),
         name=meta.get("name", ""),
+        metadata=metadata,
     )
+
+
+def _detect_strava_device(data: dict) -> str | None:
+    """Detect the original recording device/platform from Strava metadata.
+
+    Returns a platform name like "garmin", "coros", "peloton", etc.,
+    or None if it appears to be a native Strava recording.
+    """
+    device_name = str(data.get("device_name") or "").lower()
+    external_id = str(data.get("external_id") or "").lower()
+
+    # Check external_id first (most reliable)
+    if "garmin_push" in external_id or "garmin_ping" in external_id:
+        return "garmin"
+
+    # Check device_name
+    device_map = {
+        "garmin": "garmin",
+        "coros": "coros",
+        "suunto": "suunto",
+        "peloton": "peloton",
+        "wahoo": "wahoo",
+        "polar": "polar",
+        "amazfit": "amazfit",
+        "samsung": "samsung",
+        "apple watch": "apple",
+        "zwift": "zwift",
+        "stryd": "stryd",
+    }
+    for keyword, platform in device_map.items():
+        if keyword in device_name:
+            return platform
+
+    # Native Strava app recordings
+    if "strava" in device_name:
+        return None
+
+    return None
 
 
 def _parse_strava_sport(meta: dict) -> str:
