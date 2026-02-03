@@ -35,7 +35,18 @@ def find_duplicates(catalog: list[dict]) -> list[list[dict]]:
 
 
 def _overlaps(a: dict, b: dict) -> bool:
-    """Two entries overlap if their time windows are within tolerance."""
-    ta = datetime.fromisoformat(a["start_time"])
-    tb = datetime.fromisoformat(b["start_time"])
-    return abs(ta - tb) <= START_TIME_TOLERANCE
+    """Two entries overlap if their time windows intersect (with tolerance)."""
+    ta_start = datetime.fromisoformat(a["start_time"])
+    tb_start = datetime.fromisoformat(b["start_time"])
+
+    # Get durations, default to 0 if missing
+    da = timedelta(seconds=a.get("total_duration") or 0)
+    db = timedelta(seconds=b.get("total_duration") or 0)
+
+    ta_end = ta_start + da + START_TIME_TOLERANCE
+    tb_end = tb_start + db + START_TIME_TOLERANCE
+    ta_start_adj = ta_start - START_TIME_TOLERANCE
+    tb_start_adj = tb_start - START_TIME_TOLERANCE
+
+    # Intervals overlap if each starts before the other ends
+    return ta_start_adj <= tb_end and tb_start_adj <= ta_end

@@ -1,7 +1,7 @@
 """Data loading services for the web UI."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -459,8 +459,8 @@ _FIELD_MAP = {
 def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
     """Find the raw source files that were merged for a given activity.
 
-    Matches by timestamp proximity (within 5 min) against the raw catalog,
-    since different sources may have slightly different start times.
+    Matches by time interval overlap against the raw catalog - any activity
+    whose time window overlaps with the merged activity's window is included.
     """
     from fitgrabber.processing.catalog import _parse_file
 
@@ -473,7 +473,22 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
     if not activity_ts:
         return []
 
-    tolerance_s = 300  # 5 minutes, same as dedup tolerance
+    # Get merged activity duration from the processed file
+    from fitgrabber.parsers.fit_parser import parse_summary
+
+    merged_dir = cfg.processed_merged_dir()
+    merged_duration = 0
+    for f in merged_dir.iterdir():
+        if f.stem.startswith(ts_prefix) and f.suffix == ".fit":
+            try:
+                activity = parse_summary(f, "merged")
+                if activity and activity.total_duration:
+                    merged_duration = activity.total_duration
+            except Exception:
+                pass
+            break
+
+    tolerance_s = 300  # 5 minutes tolerance on interval edges
 
     catalog = _cached_catalog(cfg)
     matches = []
@@ -485,7 +500,16 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
             entry_ts = datetime.fromisoformat(ts).replace(tzinfo=None)
         except ValueError:
             continue
-        if abs((entry_ts - activity_ts).total_seconds()) <= tolerance_s:
+
+        # Check time interval overlap (not just start time proximity)
+        entry_duration = entry.get("total_duration") or 0
+        merged_end = activity_ts + timedelta(seconds=merged_duration + tolerance_s)
+        entry_end = entry_ts + timedelta(seconds=entry_duration + tolerance_s)
+        activity_start_adj = activity_ts - timedelta(seconds=tolerance_s)
+        entry_start_adj = entry_ts - timedelta(seconds=tolerance_s)
+
+        # Intervals overlap if each starts before the other ends
+        if activity_start_adj <= entry_end and entry_start_adj <= merged_end:
             matches.append(entry)
 
     sources = []
