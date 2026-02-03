@@ -186,6 +186,9 @@ def training_load(activities: list[dict]) -> dict:
     }
 
 
+MIN_REALISTIC_PACE = 2.5  # min/mi - faster than any human can run
+
+
 def best_efforts(activities: list[dict]) -> dict:
     """Find best efforts at various durations across all activities.
 
@@ -205,6 +208,7 @@ def best_efforts(activities: list[dict]) -> dict:
     for label, target_dur in durations:
         best_speed = None
         best_date = None
+        best_id = None
         for a in activities:
             if a.get("sport") != "running" or a.get("has_anomalies"):
                 continue
@@ -213,13 +217,23 @@ def best_efforts(activities: list[dict]) -> dict:
             if not dist or not dur or dur < target_dur * 0.9:
                 continue
             speed = dist / dur
+            # Skip anomalous speeds (faster than humanly possible ~2:30/mi = 10.7 m/s)
+            if speed > 10.7:
+                continue
             if best_speed is None or speed > best_speed:
                 best_speed = speed
                 best_date = a.get("start_time", "")[:10]
+                best_id = a.get("id")
         pace = None
         if best_speed and best_speed > 0:
             pace = (1609.344 / best_speed) / 60
-        results.append({"duration": label, "speed": best_speed, "pace": pace, "date": best_date})
+        results.append({
+            "duration": label,
+            "speed": best_speed,
+            "pace": pace,
+            "date": best_date,
+            "activity_id": best_id,
+        })
 
     return {"efforts": results}
 

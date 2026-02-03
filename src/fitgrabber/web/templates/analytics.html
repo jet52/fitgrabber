@@ -117,7 +117,7 @@
           <tr>
             <td>{{ e.duration }}</td>
             <td>{% if e.pace %}{{ "%d:%02d"|format(e.pace|int, ((e.pace % 1) * 60)|int) }} /mi{% else %}-{% endif %}</td>
-            <td>{{ e.date or "-" }}</td>
+            <td>{% if e.activity_id %}<a href="{{ url_for('activity_detail_view', activity_id=e.activity_id) }}">{{ e.date }}</a>{% else %}{{ e.date or "-" }}{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -137,7 +137,7 @@
             <td>{{ pr.distance }}</td>
             <td>{{ pr.time | format_duration if pr.time else "-" }}</td>
             <td>{% if pr.pace %}{{ "%d:%02d"|format(pr.pace|int, ((pr.pace % 1) * 60)|int) }} /mi{% else %}-{% endif %}</td>
-            <td>{{ pr.date or "-" }}</td>
+            <td>{% if pr.activity_id %}<a href="{{ url_for('activity_detail_view', activity_id=pr.activity_id) }}">{{ pr.date }}</a>{% else %}{{ pr.date or "-" }}{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

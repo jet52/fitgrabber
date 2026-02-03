@@ -205,6 +205,9 @@ STANDARD_DISTANCES = [
 ]
 
 
+MIN_REALISTIC_PACE = 2.5  # min/mi - faster than any human can run
+
+
 def personal_records(activities: list[dict]) -> list[dict]:
     """Find fastest times for standard distances (running only)."""
     records = []
@@ -212,6 +215,7 @@ def personal_records(activities: list[dict]) -> list[dict]:
         best_time = None
         best_date = None
         best_pace = None
+        best_id = None
         for a in activities:
             if a.get("sport") != "running":
                 continue
@@ -223,16 +227,22 @@ def personal_records(activities: list[dict]) -> list[dict]:
                 continue
             # Estimate time for the target distance
             est_time = dur * (target_dist / dist)
+            pace = (1609.344 / (target_dist / est_time)) / 60 if est_time > 0 else None
+            # Skip anomalous paces (faster than humanly possible)
+            if pace is not None and pace < MIN_REALISTIC_PACE:
+                continue
             if best_time is None or est_time < best_time:
                 best_time = est_time
                 best_date = a.get("start_time", "")[:10]
-                best_pace = (1609.344 / (target_dist / est_time)) / 60 if est_time > 0 else None
+                best_pace = pace
+                best_id = a.get("id")
         records.append(
             {
                 "distance": label,
                 "time": best_time,
                 "date": best_date,
                 "pace": best_pace,
+                "activity_id": best_id,
             }
         )
     return records
