@@ -102,7 +102,7 @@ def write_fit(activity: Activity, fit_path: Path) -> None:
             rec.cadence = pt.cadence
         if pt.speed is not None:
             rec.speed = pt.speed
-        if pt.power is not None:
+        if pt.power is not None and pt.power >= 0:
             rec.power = pt.power
         if pt.temperature is not None:
             rec.temperature = pt.temperature
@@ -131,9 +131,9 @@ def write_fit(activity: Activity, fit_path: Path) -> None:
                 lm.avg_speed = lap.avg_speed
             if lap.avg_cadence is not None:
                 lm.avg_cadence = lap.avg_cadence
-            if lap.avg_power is not None:
+            if lap.avg_power is not None and lap.avg_power >= 0:
                 lm.avg_power = lap.avg_power
-            if lap.max_power is not None:
+            if lap.max_power is not None and lap.max_power >= 0:
                 lm.max_power = lap.max_power
             if lap.lap_trigger:
                 trigger = _LAP_TRIGGER_MAP.get(lap.lap_trigger.lower())
@@ -179,7 +179,7 @@ def write_fit(activity: Activity, fit_path: Path) -> None:
         sess.avg_speed = activity.avg_speed
     if activity.avg_cadence is not None:
         sess.avg_cadence = activity.avg_cadence
-    if activity.avg_power is not None:
+    if activity.avg_power is not None and activity.avg_power >= 0:
         sess.avg_power = activity.avg_power
     builder.add(sess)
 
