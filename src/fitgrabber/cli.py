@@ -113,9 +113,7 @@ def backfill_strava(
 
     updated = backfill_device_info(cfg)
     if updated:
-        typer.echo(
-            "Run 'fitgrabber process --force' to rebuild with updated device info."
-        )
+        typer.echo("Run 'fitgrabber process --force' to rebuild with updated device info.")
 
 
 @app.command()
@@ -141,15 +139,23 @@ def process(
         save_catalog,
     )
     from fitgrabber.processing.dedup import find_duplicates
+    from fitgrabber.processing.manifest import (
+        load_manifest,
+        manifest_path,
+        save_manifest,
+    )
     from fitgrabber.processing.merge import merge_activities
 
     # Step 1: Build catalog (incremental — skips unchanged files)
     typer.echo("Building activity catalog...")
     if force:
-        # Delete existing catalog to force full rebuild
+        # Delete existing catalog and manifest to force full rebuild
         cat_path = cfg.catalog_path()
         if cat_path.exists():
             cat_path.unlink()
+        man_path = manifest_path(cfg)
+        if man_path.exists():
+            man_path.unlink()
     catalog, activity_cache = build_catalog(cfg)
     save_catalog(cfg, catalog)
 
@@ -170,7 +176,7 @@ def process(
     duped_files = {e["source_file"] for group in dup_groups for e in group}
     unique_entries = [e for e in catalog if e["source_file"] not in duped_files]
 
-    # Build set of existing processed files to skip re-processing
+    # Ensure output directories exist
     ind_dir = cfg.processed_individual_dir()
     merged_dir = cfg.processed_merged_dir()
     ind_dir.mkdir(parents=True, exist_ok=True)
@@ -179,13 +185,9 @@ def process(
     # Clean up stale individual files whose activities are now in merge groups
     if force:
         _clean_stale_individuals(ind_dir, dup_groups, verbose)
-    existing_ts_prefixes: set[str] = set()
-    if not force:
-        for d in (ind_dir, merged_dir):
-            for f in list(d.glob("*.json")) + list(d.glob("*.fit")):
-                parts = f.stem.split("_", 2)
-                if len(parts) >= 2:
-                    existing_ts_prefixes.add(f"{parts[0]}_{parts[1]}")
+
+    # Load manifest for incremental processing
+    manifest = load_manifest(cfg) if not force else {}
 
     def _get_activity(entry: dict) -> object | None:
         """Get activity from cache or parse from file."""
@@ -211,11 +213,22 @@ def process(
     ind_count = 0
     skipped = 0
     all_anomalies: list[dict] = []
+    new_manifest: dict[str, dict] = {}
 
     for entry in unique_entries:
-        if _ts_prefix(entry) in existing_ts_prefixes:
+        ts = _ts_prefix(entry)
+        sources = {entry["source_file"]}
+        existing = manifest.get(ts)
+        if existing and set(existing["source_files"]) == sources:
+            # Unchanged — skip but preserve in manifest
+            new_manifest[ts] = existing
             skipped += 1
             continue
+        if existing:
+            # Source files changed — delete stale output
+            Path(existing["output_file"]).unlink(missing_ok=True)
+            if verbose:
+                typer.echo(f"  Removed stale: {existing['output_file']}")
         activity = _get_activity(entry)
         if not activity:
             continue
@@ -223,7 +236,8 @@ def process(
             _log_activity(activity)
         anomalies = detect_anomalies(activity)
         _collect_anomalies(all_anomalies, str(activity.source_file), anomalies)
-        _save_activity_json(activity, ind_dir, anomalies)
+        out_path = _save_activity_json(activity, ind_dir, anomalies)
+        new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         ind_count += 1
 
     # Step 5: Merge duplicate groups
@@ -231,11 +245,20 @@ def process(
     merged_count = 0
 
     for group in dup_groups:
-        # Check if already processed (use first entry's timestamp for filename)
         rep = group[0]
-        if _ts_prefix(rep) in existing_ts_prefixes:
+        ts = _ts_prefix(rep)
+        sources = {e["source_file"] for e in group}
+        existing = manifest.get(ts)
+        if existing and set(existing["source_files"]) == sources:
+            # Unchanged — skip but preserve in manifest
+            new_manifest[ts] = existing
             skipped += 1
             continue
+        if existing:
+            # Source files changed — delete stale output
+            Path(existing["output_file"]).unlink(missing_ok=True)
+            if verbose:
+                typer.echo(f"  Removed stale: {existing['output_file']}")
 
         activities = []
         for entry in group:
@@ -248,20 +271,25 @@ def process(
                     _log_activity(activities[0])
                 anomalies = detect_anomalies(activities[0])
                 _collect_anomalies(all_anomalies, str(activities[0].source_file), anomalies)
-                _save_activity_json(activities[0], ind_dir, anomalies)
+                out_path = _save_activity_json(activities[0], ind_dir, anomalies)
+                new_manifest[ts] = {
+                    "output_file": str(out_path),
+                    "source_files": list(sources),
+                }
                 ind_count += 1
             continue
 
         if verbose:
-            sources = [f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities]
-            typer.echo(f"  Merging: {', '.join(sources)}")
+            src_names = [f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities]
+            typer.echo(f"  Merging: {', '.join(src_names)}")
         merged = merge_activities(activities, verbose=verbose)
         if verbose:
             _log_activity(merged, prefix="    Result")
         anomalies = detect_anomalies(merged)
         label = "merged:" + ",".join(str(a.source_file) for a in activities)
         _collect_anomalies(all_anomalies, label, anomalies)
-        _save_merged_fit(merged, merged_dir)
+        out_path = _save_merged_fit(merged, merged_dir)
+        new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         merged_count += 1
 
     # Step 6: Save anomaly report
@@ -272,13 +300,14 @@ def process(
         errors = sum(1 for a in all_anomalies if a["severity"] == "error")
         typer.echo(f"  Anomalies: {errors} errors, {warnings} warnings → {report_path}")
 
+    # Step 7: Save manifest
+    save_manifest(cfg, new_manifest)
+
     skip_msg = f", {skipped} skipped" if skipped else ""
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
 
 
-def _clean_stale_individuals(
-    ind_dir: Path, dup_groups: list[list[dict]], verbose: bool
-) -> None:
+def _clean_stale_individuals(ind_dir: Path, dup_groups: list[list[dict]], verbose: bool) -> None:
     """Remove individual files whose activities now belong to a merge group.
 
     When --force reprocesses, an activity that was previously unique (saved as

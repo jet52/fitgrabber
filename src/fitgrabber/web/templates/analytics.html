@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Analytics — fitgrabber{% endblock %}
 {% block content %}
-<h2 class="mb-4">Analytics</h2>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0">Analytics</h2>
+  <div class="btn-group" role="group" aria-label="Date range">
+    <a href="?range=30" class="btn btn-sm {{ 'btn-primary' if current_range == '30' else 'btn-outline-secondary' }}">30d</a>
+    <a href="?range=90" class="btn btn-sm {{ 'btn-primary' if current_range == '90' else 'btn-outline-secondary' }}">90d</a>
+    <a href="?range=365" class="btn btn-sm {{ 'btn-primary' if current_range == '365' else 'btn-outline-secondary' }}">1y</a>
+    <a href="?range=all" class="btn btn-sm {{ 'btn-primary' if current_range == 'all' else 'btn-outline-secondary' }}">All</a>
+  </div>
+</div>
 
 <div class="row g-3 mb-4">
   <div class="col-md-3">

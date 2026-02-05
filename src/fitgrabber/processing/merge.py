@@ -139,9 +139,18 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
 
     activities.sort(key=lambda a: len(a.track_points), reverse=True)
 
-    sources_label = ", ".join(
-        f"{a.source_platform} ({len(a.track_points)} pts)" for a in activities
-    )
+    # Build descriptive label for each source (platform, origin, time, points)
+    def _source_label(a: Activity) -> str:
+        platform = a.source_platform
+        # For Strava, include original device/platform if known
+        if platform == "strava" and a.metadata:
+            origin = a.metadata.get("original_platform")
+            if origin:
+                platform = f"strava({origin})"
+        time_str = a.start_time.strftime("%Y-%m-%d %H:%M") if a.start_time else "?"
+        return f"{platform} {time_str} ({len(a.track_points)} pts)"
+
+    sources_label = ", ".join(_source_label(a) for a in activities)
     typer.echo(f"  Merging {len(activities)} sources: {sources_label}")
 
     sport = _resolve_sport(activities, verbose)
@@ -188,9 +197,7 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
         while j < n and tagged[j][0].timestamp - group[0][0].timestamp <= POINT_MERGE_TOLERANCE:
             group.append(tagged[j])
             j += 1
-        merged.append(
-            _merge_points_priority(group, quality_issues, secondary_fills)
-        )
+        merged.append(_merge_points_priority(group, quality_issues, secondary_fills))
         i = j
 
     laps, lap_source = _select_laps(activities, verbose)
@@ -222,9 +229,19 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
     # Logging
     if verbose or True:  # Always log key merge info
         _log_merge_summary(
-            activities, sport, result_distance, result_duration, result_calories,
-            avg_hr, hr_count, hr_excluded, max_hr, merged, secondary_fills,
-            lap_source, laps,
+            activities,
+            sport,
+            result_distance,
+            result_duration,
+            result_calories,
+            avg_hr,
+            hr_count,
+            hr_excluded,
+            max_hr,
+            merged,
+            secondary_fills,
+            lap_source,
+            laps,
         )
 
     return Activity(
@@ -307,9 +324,7 @@ def _merge_points_priority(
     return result
 
 
-def _calc_avg_int(
-    points: list[TrackPoint], field: str
-) -> tuple[int | None, int, int]:
+def _calc_avg_int(points: list[TrackPoint], field: str) -> tuple[int | None, int, int]:
     """Calculate average of an int field, excluding zero/None dropout stretches."""
     total = 0
     count = 0
@@ -324,9 +339,7 @@ def _calc_avg_int(
     return (round(total / count) if count else None), count, excluded
 
 
-def _calc_avg_float(
-    points: list[TrackPoint], field: str
-) -> tuple[float | None, int, int]:
+def _calc_avg_float(points: list[TrackPoint], field: str) -> tuple[float | None, int, int]:
     total = 0.0
     count = 0
     excluded = 0
@@ -415,8 +428,7 @@ def _log_merge_summary(
             if a.source_platform != lap_source and a.laps:
                 score = _lap_score(a)
                 typer.echo(
-                    f"    Laps discarded: {a.source_platform} "
-                    f"({len(a.laps)} laps, score={score})"
+                    f"    Laps discarded: {a.source_platform} ({len(a.laps)} laps, score={score})"
                 )
 
 

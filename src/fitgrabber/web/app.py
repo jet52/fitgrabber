@@ -1,6 +1,6 @@
 """Flask app factory and routes for fitgrabber web UI."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, redirect, render_template, request, url_for
 
@@ -257,14 +257,27 @@ def create_app(cfg: Config) -> Flask:
         )
 
         all_activities = get_processed_activities(cfg)
-        clean = [a for a in all_activities if not a.get("has_anomalies")]
-        streak = streaks(all_activities)
+
+        # Date range filtering
+        range_param = request.args.get("range", "90")
+        range_days = {"30": 30, "90": 90, "365": 365}.get(range_param)
+        if range_days:
+            cutoff = (datetime.now() - timedelta(days=range_days)).isoformat()
+            filtered = [
+                a for a in all_activities
+                if a.get("start_time") and a["start_time"] >= cutoff
+            ]
+        else:
+            filtered = all_activities
+
+        clean = [a for a in filtered if not a.get("has_anomalies")]
+        streak = streaks(filtered)
         weekly = weekly_volume(clean)
         monthly = monthly_volume(clean)
         hr_zones = hr_zone_distribution(clean)
         pace = pace_trends(clean)
         prs = personal_records(clean)
-        sports = {a.get("sport", "unknown") for a in all_activities}
+        sports = {a.get("sport", "unknown") for a in filtered}
         fitness = aggregate_fitness(clean)
         load = training_load(clean)
         efforts = best_efforts(clean)
@@ -272,7 +285,7 @@ def create_app(cfg: Config) -> Flask:
         return render_template(
             "analytics.html",
             streak=streak,
-            total_count=len(all_activities),
+            total_count=len(filtered),
             sport_count=len(sports),
             prs=prs,
             weekly_json=json_mod.dumps(weekly),
@@ -283,6 +296,7 @@ def create_app(cfg: Config) -> Flask:
             load_json=json_mod.dumps(load),
             efforts=efforts.get("efforts", []),
             pace_dist_json=json_mod.dumps(pace_dist),
+            current_range=range_param,
         )
 
     @app.route("/api/activity/<activity_id>/flag", methods=["POST"])
