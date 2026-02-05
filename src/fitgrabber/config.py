@@ -14,7 +14,6 @@ PLATFORMS = [
     "coros",
     "suunto",
     "stryd",
-    "myfitnesspal",
     "sporttracks",
     "manual",
 ]

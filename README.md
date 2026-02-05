@@ -8,7 +8,6 @@ CLI tool for collecting, organizing, and analyzing personal fitness data from mu
 |----------|--------|------|
 | Garmin Connect | API (email/password) | Activities as FIT/TCX/GPX |
 | Strava | API (OAuth) | Activities as JSON with streams |
-| MyFitnessPal | Scraping (username) | Nutrition data as CSV |
 | COROS | Manual file import | FIT exports |
 | Suunto | Manual file import | FIT/GPX exports |
 | Stryd | Manual file import | FIT exports |
@@ -45,10 +44,6 @@ client_secret = ""
 access_token = ""
 refresh_token = ""
 expires_at = 0
-
-[platforms.myfitnesspal]
-username = "your-username"
-days = 365
 
 [platforms.coros]
 import_dir = "/path/to/coros/exports"
@@ -137,7 +132,6 @@ uv run fitgrabber status
     coros/           # Imported FIT files
     suunto/          # Imported FIT/GPX files
     stryd/           # Imported FIT files
-    myfitnesspal/    # Daily nutrition CSVs
     sporttracks/     # Imported files
     manual/          # Manually imported files
   processed/

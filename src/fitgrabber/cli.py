@@ -446,8 +446,6 @@ def _sync_platform(platform: str, cfg: Config) -> None:
         from fitgrabber.platforms.garmin_health import sync as do_sync
     elif platform == "strava":
         from fitgrabber.platforms.strava import sync as do_sync
-    elif platform == "myfitnesspal":
-        from fitgrabber.platforms.myfitnesspal import sync as do_sync
     elif platform in ("coros", "suunto", "stryd", "sporttracks", "manual"):
         from fitgrabber.platforms.manual import sync as do_sync
     else:

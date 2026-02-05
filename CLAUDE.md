@@ -4,7 +4,7 @@ Python CLI tool for collecting, organizing, and analyzing personal fitness data.
 
 ## Data Sources
 
-Garmin, COROS, Strava, Suunto, Stryd, MyFitnessPal, SportTracks.mobi
+Garmin, COROS, Strava, Suunto, Stryd, SportTracks.mobi
 
 - Use official APIs with OAuth/tokens where available
 - Fall back to file import where no API exists

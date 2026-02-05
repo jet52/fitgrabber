@@ -10,7 +10,6 @@ dependencies = [
     "tcxreader>=0.4",
     "garminconnect>=0.2",
     "stravalib>=2.0",
-    "myfitnesspal>=2.0",
     "pandas>=2.0",
     "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0",
