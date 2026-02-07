@@ -9,6 +9,7 @@ from fitgrabber.config import Config
 
 # Module-level caches, all cleared together via invalidate_cache().
 _cache: dict[str, Any] | None = None
+_cache_created: float = 0.0
 
 
 def _get_cache() -> dict[str, Any]:
@@ -18,9 +19,20 @@ def _get_cache() -> dict[str, Any]:
     return _cache
 
 
+def _check_stale(cfg: Config) -> None:
+    """Auto-invalidate cache if processing has occurred since cache was created."""
+    global _cache_created
+    if _cache is None:
+        return
+    marker = cfg.data_dir / "processed" / ".last_processed"
+    if marker.exists() and marker.stat().st_mtime > _cache_created:
+        invalidate_cache()
+
+
 def invalidate_cache() -> None:
-    global _cache
+    global _cache, _cache_created
     _cache = None
+    _cache_created = 0.0
 
 
 def _cached_catalog(cfg: Config) -> list[dict]:
@@ -217,6 +229,7 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
     """
     if force_reload:
         invalidate_cache()
+    _check_stale(cfg)
     c = _get_cache()
     if "activities" in c:
         return c["activities"]
@@ -280,6 +293,10 @@ def get_processed_activities(cfg: Config, force_reload: bool = False) -> list[di
             a["avg_speed"] = a["total_distance"] / a["total_duration"]
 
     c["activities"] = activities
+    global _cache_created
+    import time
+
+    _cache_created = time.time()
     return activities
 
 

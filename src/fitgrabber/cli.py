@@ -315,6 +315,9 @@ def _run_process(
     # Step 7: Save manifest
     save_manifest(cfg, new_manifest)
 
+    # Step 8: Touch marker so the web UI auto-refreshes
+    (cfg.data_dir / "processed" / ".last_processed").write_text("")
+
     skip_msg = f", {skipped} skipped" if skipped else ""
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
 
