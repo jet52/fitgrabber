@@ -39,12 +39,17 @@ def sync(
         raise typer.Exit(1)
 
     targets = PLATFORMS if platform == "all" else [platform]
+    total_new = 0
     for t in targets:
         if t not in PLATFORMS:
             typer.echo(f"Unknown platform: {t}", err=True)
             raise typer.Exit(1)
         typer.echo(f"Syncing {t}...")
-        _sync_platform(t, cfg)
+        total_new += _sync_platform(t, cfg)
+
+    if total_new > 0:
+        typer.echo(f"\nProcessing {total_new} new activities...")
+        _run_process(cfg)
 
 
 @app.command()
@@ -124,13 +129,27 @@ def process(
     force: bool = typer.Option(False, "--force", help="Reprocess all, ignore cache"),
 ) -> None:
     """Run the dedup/merge/clean pipeline on downloaded data."""
-    import json
     from datetime import datetime
 
     cfg = load_config()
     if not cfg.data_dir.exists():
         typer.echo("Run 'fitgrabber config' first to set up the data directory.", err=True)
         raise typer.Exit(1)
+
+    after_dt = datetime.fromisoformat(after) if after else None
+    before_dt = datetime.fromisoformat(before) if before else None
+    _run_process(cfg, verbose=verbose, force=force, after=after_dt, before=before_dt)
+
+
+def _run_process(
+    cfg: Config,
+    verbose: bool = False,
+    force: bool = False,
+    after: object = None,
+    before: object = None,
+) -> None:
+    """Core processing pipeline used by both `process` and `sync` commands."""
+    import json
 
     from fitgrabber.processing.anomaly import detect_anomalies
     from fitgrabber.processing.catalog import (
@@ -149,7 +168,6 @@ def process(
     # Step 1: Build catalog (incremental — skips unchanged files)
     typer.echo("Building activity catalog...")
     if force:
-        # Delete existing catalog and manifest to force full rebuild
         cat_path = cfg.catalog_path()
         if cat_path.exists():
             cat_path.unlink()
@@ -161,10 +179,8 @@ def process(
 
     # Filter by date range
     if after or before:
-        after_dt = datetime.fromisoformat(after) if after else None
-        before_dt = datetime.fromisoformat(before) if before else None
         original = len(catalog)
-        catalog = _filter_by_date(catalog, after_dt, before_dt)
+        catalog = _filter_by_date(catalog, after, before)
         typer.echo(f"  Date filter: {len(catalog)}/{original} activities")
 
     # Step 2: Find duplicates
@@ -190,14 +206,12 @@ def process(
     manifest = load_manifest(cfg) if not force else {}
 
     def _get_activity(entry: dict) -> object | None:
-        """Get activity from cache or parse from file."""
         key = entry["source_file"]
         if key in activity_cache:
             return activity_cache[key]
         return _parse_file(Path(key), entry["source_platform"])
 
     def _ts_prefix(entry: dict) -> str:
-        """Extract timestamp prefix for matching existing output files."""
         ts = entry.get("start_time", "")
         if ts:
             from datetime import datetime as dt
@@ -220,12 +234,10 @@ def process(
         sources = {entry["source_file"]}
         existing = manifest.get(ts)
         if existing and set(existing["source_files"]) == sources:
-            # Unchanged — skip but preserve in manifest
             new_manifest[ts] = existing
             skipped += 1
             continue
         if existing:
-            # Source files changed — delete stale output
             Path(existing["output_file"]).unlink(missing_ok=True)
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
@@ -250,12 +262,10 @@ def process(
         sources = {e["source_file"] for e in group}
         existing = manifest.get(ts)
         if existing and set(existing["source_files"]) == sources:
-            # Unchanged — skip but preserve in manifest
             new_manifest[ts] = existing
             skipped += 1
             continue
         if existing:
-            # Source files changed — delete stale output
             Path(existing["output_file"]).unlink(missing_ok=True)
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
@@ -280,7 +290,9 @@ def process(
             continue
 
         if verbose:
-            src_names = [f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities]
+            src_names = [
+                f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities
+            ]
             typer.echo(f"  Merging: {', '.join(src_names)}")
         merged = merge_activities(activities, verbose=verbose)
         if verbose:
@@ -466,8 +478,8 @@ def _save_activity_json(
     return path
 
 
-def _sync_platform(platform: str, cfg: Config) -> None:
-    """Dispatch to platform-specific sync module."""
+def _sync_platform(platform: str, cfg: Config) -> int:
+    """Dispatch to platform-specific sync module. Returns number of new files."""
     # Lazy imports to avoid loading all platform deps at startup
     if platform == "garmin":
         from fitgrabber.platforms.garmin import sync as do_sync
@@ -479,6 +491,7 @@ def _sync_platform(platform: str, cfg: Config) -> None:
         from fitgrabber.platforms.manual import sync as do_sync
     else:
         typer.echo(f"Sync not implemented for {platform}")
-        return
+        return 0
     files = do_sync(cfg, platform)
     typer.echo(f"  Downloaded {len(files)} files to {cfg.raw_dir(platform)}")
+    return len(files)
