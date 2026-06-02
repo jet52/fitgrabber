@@ -108,17 +108,17 @@ def web(
 def backfill_strava(
     ctx: typer.Context,
 ) -> None:
-    """Backfill device_name/external_id into existing Strava JSON files."""
+    """Backfill summary metrics + device info into existing Strava JSON files."""
     cfg = load_config()
     if not cfg.data_dir.exists():
         typer.echo("Run 'fitgrabber config' first.", err=True)
         raise typer.Exit(1)
 
-    from fitgrabber.platforms.strava import backfill_device_info
+    from fitgrabber.platforms.strava import backfill_summary
 
-    updated = backfill_device_info(cfg)
+    updated = backfill_summary(cfg)
     if updated:
-        typer.echo("Run 'fitgrabber process --force' to rebuild with updated device info.")
+        typer.echo("Run 'fitgrabber process --force' to rebuild with updated data.")
 
 
 @app.command()
@@ -290,9 +290,7 @@ def _run_process(
             continue
 
         if verbose:
-            src_names = [
-                f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities
-            ]
+            src_names = [f"{a.source_platform}:{Path(str(a.source_file)).name}" for a in activities]
             typer.echo(f"  Merging: {', '.join(src_names)}")
         merged = merge_activities(activities, verbose=verbose)
         if verbose:
@@ -433,6 +431,10 @@ def _save_activity_json(
 ) -> Path:
     """Serialize an Activity to a JSON file in dest_dir."""
     import json
+
+    from fitgrabber.processing.merge import fill_missing_summary
+
+    fill_missing_summary(activity)
 
     ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
     name_slug = activity.sport or "activity"

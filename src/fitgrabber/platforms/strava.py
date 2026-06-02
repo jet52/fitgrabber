@@ -89,6 +89,33 @@ def _is_rate_limit(e: Exception) -> bool:
     return "429" in msg or "rate limit" in msg
 
 
+# Summary fields pulled from the activity detail object (no extra API calls).
+SUMMARY_FIELDS = (
+    "calories",
+    "average_heartrate",
+    "max_heartrate",
+    "average_speed",
+    "max_speed",
+    "device_name",
+    "external_id",
+)
+
+
+def _detail_summary(detail) -> dict:
+    """Extract summary metrics + device info from a stravalib activity detail."""
+    avg_speed = getattr(detail, "average_speed", None)
+    max_speed = getattr(detail, "max_speed", None)
+    return {
+        "calories": getattr(detail, "calories", None),
+        "average_heartrate": getattr(detail, "average_heartrate", None),
+        "max_heartrate": getattr(detail, "max_heartrate", None),
+        "average_speed": float(avg_speed) if avg_speed is not None else None,
+        "max_speed": float(max_speed) if max_speed is not None else None,
+        "device_name": getattr(detail, "device_name", None),
+        "external_id": getattr(detail, "external_id", None),
+    }
+
+
 def _refresh_token(cfg: Config) -> str:
     import requests
 
@@ -196,8 +223,7 @@ def _fetch_activity_with_retry(
                 "elapsed_time": _to_seconds(detail.elapsed_time),
                 "moving_time": _to_seconds(detail.moving_time),
                 "distance": float(detail.distance) if detail.distance else 0,
-                "device_name": getattr(detail, "device_name", None),
-                "external_id": getattr(detail, "external_id", None),
+                **_detail_summary(detail),
             }
 
             try:
@@ -294,8 +320,13 @@ def sync(cfg: Config, platform: str = "strava") -> list[Path]:
     return downloaded
 
 
-def backfill_device_info(cfg: Config) -> int:
-    """Add device_name/external_id to existing Strava JSON files missing them."""
+def backfill_summary(cfg: Config) -> int:
+    """Backfill summary metrics + device info into existing Strava JSON files.
+
+    Fills any file missing one or more of SUMMARY_FIELDS (calories, avg/max HR,
+    avg/max speed, device_name, external_id). One detail fetch per file; streams
+    are left untouched.
+    """
     from stravalib.client import Client
 
     token = _get_access_token(cfg)
@@ -307,20 +338,19 @@ def backfill_device_info(cfg: Config) -> int:
     client = Client(access_token=token)
     rate = _RateTracker()
 
-    # Find files missing device_name
     needs_update = []
     for f in sorted(dest.iterdir()):
         if f.suffix != ".json":
             continue
         data = json.loads(f.read_text())
-        if "device_name" not in data:
+        if any(k not in data for k in SUMMARY_FIELDS):
             needs_update.append((f, data))
 
     if not needs_update:
-        typer.echo("  All files already have device info.")
+        typer.echo("  All files already have summary metrics.")
         return 0
 
-    typer.echo(f"  {len(needs_update)} files need device info backfill.")
+    typer.echo(f"  {len(needs_update)} files need summary backfill.")
     updated = 0
 
     try:
@@ -340,8 +370,7 @@ def backfill_device_info(cfg: Config) -> int:
                 signal.alarm(0)
                 rate.record()
 
-                data["device_name"] = getattr(detail, "device_name", None)
-                data["external_id"] = getattr(detail, "external_id", None)
+                data.update(_detail_summary(detail))
                 filepath.write_text(json.dumps(data, indent=2, default=str))
                 updated += 1
             except _Timeout:

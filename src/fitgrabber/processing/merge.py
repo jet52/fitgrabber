@@ -353,6 +353,28 @@ def _calc_avg_float(points: list[TrackPoint], field: str) -> tuple[float | None,
     return (total / count if count else None), count, excluded
 
 
+def fill_missing_summary(activity: Activity) -> None:
+    """Populate missing summary scalars from track points, in place.
+
+    Only fills fields the source left empty (e.g. Strava, which carries HR/speed
+    streams but no summary scalars). Calories is not derivable from streams.
+    """
+    pts = activity.track_points
+    if not pts:
+        return
+    if activity.avg_heart_rate is None:
+        activity.avg_heart_rate, _, _ = _calc_avg_int(pts, "heart_rate")
+    if activity.max_heart_rate is None:
+        hrs = [p.heart_rate for p in pts if p.heart_rate and p.heart_rate > 0]
+        activity.max_heart_rate = max(hrs) if hrs else None
+    if activity.avg_speed is None:
+        activity.avg_speed, _, _ = _calc_avg_float(pts, "speed")
+    if activity.avg_cadence is None:
+        activity.avg_cadence, _, _ = _calc_avg_int(pts, "cadence")
+    if activity.avg_power is None:
+        activity.avg_power, _, _ = _calc_avg_int(pts, "power")
+
+
 def _log_merge_summary(
     activities: list[Activity],
     sport: str,
