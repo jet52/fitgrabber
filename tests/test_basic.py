@@ -176,6 +176,102 @@ def test_merge_selects_best_laps():
     assert merged.laps[0].lap_trigger == "manual"
 
 
+def test_resolve_power_source():
+    from fitgrabber.parsers.fit_parser import _resolve_power_source
+
+    # Garmin FIT with both Stryd dev power and native power → Stryd canonical
+    assert _resolve_power_source("garmin", saw_stryd=True, saw_native=True) == (
+        "stryd",
+        "garmin_native",
+    )
+    # Garmin with only native running power
+    assert _resolve_power_source("garmin", saw_stryd=False, saw_native=True) == (
+        "garmin_native",
+        None,
+    )
+    # Standalone Stryd file (native power field is Stryd's own)
+    assert _resolve_power_source("stryd", saw_stryd=False, saw_native=True) == ("stryd", None)
+    # No power at all
+    assert _resolve_power_source("garmin", saw_stryd=False, saw_native=False) == (None, None)
+
+
+def test_detect_hr_source():
+    from fitgrabber.parsers.fit_parser import _detect_hr_source
+
+    baro = {"device_type": "barometer", "ant_device_type": None, "source_type": "local"}
+    whr = {"device_type": "whr", "ant_device_type": None, "source_type": "local"}
+    ble_strap = {
+        "device_type": "heart_rate",
+        "ant_device_type": None,
+        "source_type": "bluetooth_low_energy",
+    }
+    ant_strap = {"device_type": None, "ant_device_type": 120, "source_type": "antplus"}
+
+    # Barometer must not be mistaken for an HR sensor (the old bug)
+    assert _detect_hr_source([baro, whr]) == "wrist"
+    # External strap wins over wrist optical
+    assert _detect_hr_source([baro, ble_strap, whr]) == "chest"
+    assert _detect_hr_source([ant_strap, whr]) == "chest"
+    assert _detect_hr_source([baro]) is None
+
+
+def test_merge_propagates_provenance():
+    now = datetime(2024, 1, 1, 8, 0)
+    garmin = Activity(
+        source_file=Path("a.fit"),
+        source_platform="garmin",
+        sport="running",
+        hr_source="chest",
+        hr_detail="rr",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        rr_intervals=[0.5, 0.51, 0.49],
+        track_points=[TrackPoint(timestamp=now, heart_rate=150, power=260)],
+    )
+    strava = Activity(
+        source_file=Path("b.json"),
+        source_platform="strava",
+        sport="running",
+        power_source="garmin",
+        track_points=[TrackPoint(timestamp=now, power=260)],
+    )
+    merged = merge_activities([garmin, strava])
+    assert merged.power_source == "stryd"
+    assert merged.power_source_alt == "garmin_native"
+    assert merged.hr_source == "chest"
+    assert merged.hr_detail == "rr"
+    assert merged.rr_intervals == [0.5, 0.51, 0.49]
+
+
+def test_write_sidecar(tmp_path):
+    from fitgrabber.export.sidecar import sidecar_path, write_sidecar
+
+    activity = Activity(
+        source_file=Path("x.fit"),
+        source_platform="merged",
+        sport="running",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        hr_source="chest",
+        hr_detail="rr",
+        rr_intervals=[0.545, 0.539],
+        metadata={"sources": [{"platform": "garmin", "power_source": "stryd"}]},
+    )
+    fit_path = tmp_path / "20260606_140048_running_merged.fit"
+    out = write_sidecar(activity, fit_path)
+    assert out == sidecar_path(fit_path)
+    assert out.name == "20260606_140048_running_merged.meta.json"
+
+    import json
+
+    data = json.loads(out.read_text())
+    assert data["power_source"] == "stryd"
+    assert data["power_source_alt"] == "garmin_native"
+    assert data["hr_source"] == "chest"
+    assert data["has_rr"] is True
+    assert data["rr_ms"] == [545, 539]
+
+
 def test_anomaly_detects_speed_spike():
     now = datetime(2024, 1, 1, 8, 0)
     points = [

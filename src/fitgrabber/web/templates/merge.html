@@ -29,6 +29,8 @@
           <th>Distance</th>
           <th>Duration</th>
           <th>Track Points</th>
+          <th>Power Src</th>
+          <th>HR Src</th>
           <th>Time Range</th>
         </tr>
       </thead>
@@ -40,6 +42,8 @@
           <td>{{ src.total_distance | format_distance }}</td>
           <td>{{ src.total_duration | format_duration }}</td>
           <td>{{ src.num_track_points }}</td>
+          <td><small>{{ src.power_source or '—' }}</small></td>
+          <td><small>{{ src.hr_source or '—' }}{% if src.hr_detail == 'rr' %} <span class="badge bg-info">R-R</span>{% endif %}</small></td>
           <td><small>{{ src.start_time | format_datetime }} &mdash; {{ src.end_time | format_datetime }}</small></td>
         </tr>
         {% endfor %}
@@ -88,6 +92,12 @@
     <div id="timeline-chart"></div>
   </div>
 </div>
+
+{% if comparison_data and comparison_data.warnings %}
+{% for w in comparison_data.warnings %}
+<div class="alert alert-warning py-2 mb-2">{{ w }}</div>
+{% endfor %}
+{% endif %}
 
 {% if comparison_data %}
 <div class="card mb-4">

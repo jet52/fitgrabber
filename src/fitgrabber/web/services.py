@@ -563,6 +563,9 @@ def get_merge_sources(cfg: Config, activity_id: str) -> list[dict]:
                 "total_distance": entry.get("total_distance"),
                 "total_duration": entry.get("total_duration"),
                 "num_track_points": entry.get("num_track_points", 0),
+                "power_source": activity.power_source if activity else entry.get("power_source"),
+                "hr_source": activity.hr_source if activity else entry.get("hr_source"),
+                "hr_detail": activity.hr_detail if activity else entry.get("hr_detail"),
                 "coverage": coverage,
                 "track_points": pts,
             }
@@ -586,7 +589,7 @@ def get_comparison_data(sources: list[dict]) -> dict | None:
     if not active_fields:
         return None
 
-    result: dict = {"fields": active_fields, "sources": []}
+    result: dict = {"fields": active_fields, "sources": [], "warnings": _source_warnings(sources)}
     for src in sources:
         src_data: dict = {
             "label": f"{src['source_platform']}: {src['filename']}",
@@ -596,6 +599,26 @@ def get_comparison_data(sources: list[dict]) -> dict | None:
             src_data[field] = [p.get(field) for p in src["track_points"]]
         result["sources"].append(src_data)
     return result
+
+
+def _source_warnings(sources: list[dict]) -> list[str]:
+    """Flag when overlapping sources disagree on power or HR provenance."""
+    warnings = []
+    power_srcs = {s.get("power_source") for s in sources if s.get("power_source")}
+    if len(power_srcs) > 1:
+        warnings.append(
+            "⚠ Power sources differ across these recordings ("
+            + ", ".join(sorted(power_srcs))
+            + ") — power values are not directly comparable."
+        )
+    hr_srcs = {s.get("hr_source") for s in sources if s.get("hr_source")}
+    if len(hr_srcs) > 1:
+        warnings.append(
+            "⚠ HR sources differ ("
+            + ", ".join(sorted(hr_srcs))
+            + ") — chest-strap vs wrist optical."
+        )
+    return warnings
 
 
 def _activity_prefix(activity_id: str) -> str:
@@ -629,10 +652,12 @@ def flag_activity(cfg: Config, activity_id: str) -> None:
     # Don't duplicate
     if any(a["file"] == f"prefix:{prefix}" for a in anoms):
         return
-    anoms.append({
-        "file": f"prefix:{prefix}",
-        "reasons": [{"reason": "Manually flagged via web UI", "severity": "warning"}],
-    })
+    anoms.append(
+        {
+            "file": f"prefix:{prefix}",
+            "reasons": [{"reason": "Manually flagged via web UI", "severity": "warning"}],
+        }
+    )
     _save_anomalies(cfg, anoms)
     invalidate_cache()
 

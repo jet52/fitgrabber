@@ -238,7 +238,7 @@ def _run_process(
             skipped += 1
             continue
         if existing:
-            Path(existing["output_file"]).unlink(missing_ok=True)
+            _remove_output(existing["output_file"])
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
         activity = _get_activity(entry)
@@ -266,7 +266,7 @@ def _run_process(
             skipped += 1
             continue
         if existing:
-            Path(existing["output_file"]).unlink(missing_ok=True)
+            _remove_output(existing["output_file"])
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
 
@@ -313,11 +313,39 @@ def _run_process(
     # Step 7: Save manifest
     save_manifest(cfg, new_manifest)
 
+    # Step 7.5: Prune output files no longer referenced by the manifest
+    _prune_orphan_outputs(cfg, new_manifest, verbose)
+
     # Step 8: Touch marker so the web UI auto-refreshes
     (cfg.data_dir / "processed" / ".last_processed").write_text("")
 
     skip_msg = f", {skipped} skipped" if skipped else ""
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
+
+
+def _prune_orphan_outputs(cfg: Config, manifest: dict[str, dict], verbose: bool) -> None:
+    """Delete processed outputs (and merged sidecars) not referenced by the manifest.
+
+    Reprocessing can leave orphans when an activity's timestamp prefix shifts or a
+    source is removed. The manifest is the authoritative set of intended outputs.
+    """
+    referenced = {Path(info["output_file"]) for info in manifest.values()}
+    removed = 0
+    for d in (cfg.processed_merged_dir(), cfg.processed_individual_dir()):
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if f.name.endswith(".meta.json"):
+                continue  # sidecar removed alongside its .fit
+            if f.suffix not in (".fit", ".json"):
+                continue
+            if f not in referenced:
+                _remove_output(str(f))
+                removed += 1
+                if verbose:
+                    typer.echo(f"  Pruned orphan: {f.name}")
+    if removed:
+        typer.echo(f"  Pruned {removed} orphaned output file(s)")
 
 
 def _clean_stale_individuals(ind_dir: Path, dup_groups: list[list[dict]], verbose: bool) -> None:
@@ -412,15 +440,27 @@ def _collect_anomalies(dest: list[dict], file_label: str, anomalies: list) -> No
         )
 
 
+def _remove_output(output_file: str) -> None:
+    """Delete a processed output file and its sidecar (if a merged FIT)."""
+    path = Path(output_file)
+    path.unlink(missing_ok=True)
+    if path.suffix == ".fit":
+        from fitgrabber.export.sidecar import sidecar_path
+
+        sidecar_path(path).unlink(missing_ok=True)
+
+
 def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
-    """Write a merged Activity as a FIT file."""
+    """Write a merged Activity as a FIT file plus a provenance/R-R sidecar."""
     from fitgrabber.export.fit_writer import write_fit
+    from fitgrabber.export.sidecar import write_sidecar
 
     ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_merged.fit"
     path = dest_dir / filename
     write_fit(activity, path)
+    write_sidecar(activity, path)
     return path
 
 
@@ -455,6 +495,13 @@ def _save_activity_json(
         "avg_speed": activity.avg_speed,
         "avg_cadence": activity.avg_cadence,
         "avg_power": activity.avg_power,
+        "power_source": activity.power_source,
+        "power_source_alt": activity.power_source_alt,
+        "hr_source": activity.hr_source,
+        "hr_detail": activity.hr_detail,
+        "rr_ms": [round(v * 1000) for v in activity.rr_intervals]
+        if activity.rr_intervals
+        else None,
         "name": activity.name,
         "metadata": activity.metadata,
         "num_track_points": len(activity.track_points),

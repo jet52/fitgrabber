@@ -214,8 +214,22 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
     avg_cadence, _, _ = _calc_avg_int(merged, "cadence")
     avg_power, _, _ = _calc_avg_int(merged, "power")
 
+    power_source, power_source_alt = _resolve_merged_power_source(activities)
+    hr_source = _best_hr_source(activities)
+    hr_detail, rr_intervals = _select_rr(activities)
+
     # Merge metadata and notes
-    meta = {"merged_from": [str(a.source_file) for a in activities]}
+    meta = {
+        "merged_from": [str(a.source_file) for a in activities],
+        "sources": [
+            {
+                "platform": a.source_platform,
+                "power_source": a.power_source,
+                "hr_source": a.hr_source,
+            }
+            for a in activities
+        ],
+    }
     for a in activities:
         for k, v in a.metadata.items():
             if k not in meta:
@@ -243,6 +257,11 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
             lap_source,
             laps,
         )
+        if power_source:
+            alt = f" (alt: {power_source_alt})" if power_source_alt else ""
+            typer.echo(f"    Power source: {power_source}{alt}")
+        if hr_detail == "rr":
+            typer.echo(f"    HR detail: R-R intervals ({len(rr_intervals)} beats)")
 
     return Activity(
         source_file=activities[0].source_file,
@@ -260,10 +279,49 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
         avg_speed=avg_speed,
         avg_cadence=avg_cadence,
         avg_power=avg_power,
+        hr_source=hr_source,
+        hr_detail=hr_detail,
+        power_source=power_source,
+        power_source_alt=power_source_alt,
+        rr_intervals=rr_intervals,
         name=name,
         notes="\n".join(notes_parts),
         metadata=meta,
     )
+
+
+def _resolve_merged_power_source(activities: list[Activity]) -> tuple[str | None, str | None]:
+    """Canonical power source for the merged activity (Stryd wins if any source has it)."""
+    srcs = [a.power_source for a in activities if a.power_source]
+    if not srcs:
+        return None, None
+    native_present = any(
+        a.power_source == "garmin_native" or (a.power_source_alt and "native" in a.power_source_alt)
+        for a in activities
+    )
+    if "stryd" in srcs:
+        return "stryd", ("garmin_native" if native_present else None)
+    for pref in ("garmin_native", "strava"):
+        if pref in srcs:
+            return pref, None
+    return srcs[0], None
+
+
+def _best_hr_source(activities: list[Activity]) -> str | None:
+    sources = {a.hr_source for a in activities if a.hr_source}
+    if "chest" in sources:
+        return "chest"
+    if "wrist" in sources:
+        return "wrist"
+    return None
+
+
+def _select_rr(activities: list[Activity]) -> tuple[str | None, list[float]]:
+    """Keep beat-to-beat R-R from the first source that has it (the chest strap)."""
+    for a in activities:
+        if a.rr_intervals:
+            return "rr", a.rr_intervals
+    return None, []
 
 
 def _priority_summary(

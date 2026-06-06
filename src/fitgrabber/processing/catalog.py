@@ -172,6 +172,11 @@ def _parse_strava_json(filepath: Path, platform: str) -> Activity | None:
     if original_device:
         metadata["device_name"] = data.get("device_name", "")
         metadata["original_platform"] = original_device
+    # Strava can't tell us the sensor type; label power provenance by the
+    # uploading device when a watts stream is present, else None.
+    power_source = (
+        (original_device or "strava") if any(p.power is not None for p in points) else None
+    )
     return Activity(
         source_file=filepath,
         source_platform=platform,
@@ -185,6 +190,7 @@ def _parse_strava_json(filepath: Path, platform: str) -> Activity | None:
         avg_heart_rate=meta.get("average_heartrate"),
         max_heart_rate=meta.get("max_heartrate"),
         avg_speed=meta.get("average_speed"),
+        power_source=power_source,
         name=meta.get("name", ""),
         metadata=metadata,
     )
@@ -256,6 +262,9 @@ def _activity_to_entry(a: Activity, mtime: float | None = None) -> dict:
         "avg_speed": a.avg_speed,
         "avg_cadence": a.avg_cadence,
         "avg_power": a.avg_power,
+        "power_source": a.power_source,
+        "hr_source": a.hr_source,
+        "hr_detail": a.hr_detail,
         "name": a.name,
         "num_track_points": len(a.track_points),
         "file_mtime": mtime,
