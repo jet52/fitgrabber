@@ -19,6 +19,10 @@ PLATFORMS = [
 ]
 
 RAW_SUBDIRS = [f"raw/{p}" for p in PLATFORMS]
+
+# Platforms that hold non-activity data (e.g. daily wellness summaries). They are
+# synced and kept in raw/ but excluded from the activity catalog and pipeline.
+NON_ACTIVITY_PLATFORMS = {"garmin-health"}
 PROCESSED_SUBDIRS = ["processed/individual", "processed/merged"]
 
 

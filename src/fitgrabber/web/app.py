@@ -264,8 +264,7 @@ def create_app(cfg: Config) -> Flask:
         if range_days:
             cutoff = (datetime.now() - timedelta(days=range_days)).isoformat()
             filtered = [
-                a for a in all_activities
-                if a.get("start_time") and a["start_time"] >= cutoff
+                a for a in all_activities if a.get("start_time") and a["start_time"] >= cutoff
             ]
         else:
             filtered = all_activities

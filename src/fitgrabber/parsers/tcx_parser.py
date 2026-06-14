@@ -45,4 +45,45 @@ def parse(filepath: Path, platform: str = "unknown") -> Activity:
     if points:
         activity.start_time = activity.start_time or points[0].timestamp
         activity.end_time = points[-1].timestamp
+    elif activity.start_time is None:
+        # Summary-only TCX (no <Trackpoint> elements): tcxreader can't derive a
+        # start time. Recover it (and duration) from the <Id>/<Lap> summary.
+        start, duration = _summary_from_xml(filepath)
+        if start:
+            activity.start_time = start
+            if duration and not activity.total_duration:
+                activity.total_duration = duration
     return activity
+
+
+def _summary_from_xml(filepath: Path) -> tuple[object | None, float | None]:
+    """Read activity start time and total duration from a TCX without trackpoints."""
+    import xml.etree.ElementTree as ET
+    from datetime import datetime
+
+    def _iso(text: str) -> object | None:
+        try:
+            return datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    try:
+        root = ET.parse(str(filepath)).getroot()
+    except (ET.ParseError, OSError):
+        return None, None
+
+    start = None
+    duration = 0.0
+    for el in root.iter():
+        tag = el.tag.rsplit("}", 1)[-1]  # strip namespace
+        if start is None and tag == "Id" and el.text:
+            start = _iso(el.text)
+        elif tag == "Lap":
+            if start is None and el.get("StartTime"):
+                start = _iso(el.get("StartTime"))
+        elif tag == "TotalTimeSeconds" and el.text:
+            try:
+                duration += float(el.text)
+            except ValueError:
+                pass
+    return start, (duration or None)

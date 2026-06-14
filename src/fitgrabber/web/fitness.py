@@ -227,13 +227,15 @@ def best_efforts(activities: list[dict]) -> dict:
         pace = None
         if best_speed and best_speed > 0:
             pace = (1609.344 / best_speed) / 60
-        results.append({
-            "duration": label,
-            "speed": best_speed,
-            "pace": pace,
-            "date": best_date,
-            "activity_id": best_id,
-        })
+        results.append(
+            {
+                "duration": label,
+                "speed": best_speed,
+                "pace": pace,
+                "date": best_date,
+                "activity_id": best_id,
+            }
+        )
 
     return {"efforts": results}
 

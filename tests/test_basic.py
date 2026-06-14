@@ -176,6 +176,220 @@ def test_merge_selects_best_laps():
     assert merged.laps[0].lap_trigger == "manual"
 
 
+def test_merge_recomputes_lap_power_from_canonical_stream():
+    now = datetime(2024, 1, 1, 8, 0)
+    # Lap-source records carry native power (200W) in the lap summary, but the
+    # canonical merged record stream (with Stryd power 150W) should win.
+    pts = [
+        TrackPoint(timestamp=now + timedelta(seconds=s), heart_rate=140, power=150)
+        for s in range(0, 300, 10)
+    ]
+    a1 = Activity(
+        source_file=Path("a.fit"),
+        source_platform="garmin",
+        sport="running",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        track_points=pts,
+        laps=[
+            Lap(
+                start_time=now,
+                end_time=now,  # degenerate end (broken Garmin lap timestamp)
+                total_duration=300,
+                lap_trigger="manual",
+                avg_power=200,  # stale native lap power
+                max_power=260,
+            ),
+        ],
+    )
+    a2 = Activity(
+        source_file=Path("b.fit"),
+        source_platform="strava",
+        sport="running",
+        track_points=[TrackPoint(timestamp=now, heart_rate=140)],
+        laps=[Lap(start_time=now, end_time=now + timedelta(minutes=5), lap_trigger="session_end")],
+    )
+    merged = merge_activities([a1, a2])
+    assert merged.laps[0].avg_power == 150
+    assert merged.laps[0].max_power == 150
+
+
+def test_tcx_recovers_start_time_from_summary_only_file(tmp_path):
+    from fitgrabber.parsers.tcx_parser import parse
+
+    tcx = tmp_path / "summary.tcx"
+    tcx.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/'
+        'TrainingCenterDatabase/v2">\n'
+        "  <Activities><Activity Sport=\"Running\">\n"
+        "    <Id>2011-08-23T22:30:10.000Z</Id>\n"
+        '    <Lap StartTime="2011-08-23T22:30:10.000Z">\n'
+        "      <TotalTimeSeconds>3780.0</TotalTimeSeconds>\n"
+        "      <DistanceMeters>12874.75</DistanceMeters>\n"
+        "    </Lap>\n"
+        "  </Activity></Activities>\n"
+        "</TrainingCenterDatabase>\n"
+    )
+    a = parse(tcx, "garmin")
+    assert a.track_points == []
+    assert a.start_time is not None
+    assert a.start_time.strftime("%Y%m%d_%H%M%S") == "20110823_223010"
+    assert a.total_duration == 3780.0
+
+
+def test_output_stamp_falls_back_to_source_stem():
+    from fitgrabber.cli import _output_stamp
+
+    dated = Activity(
+        source_file=Path("/raw/garmin/123.tcx"),
+        source_platform="garmin",
+        start_time=datetime(2011, 8, 23, 22, 30, 10),
+    )
+    undated = Activity(
+        source_file=Path("/raw/garmin/2025-02-02.json"),
+        source_platform="garmin",
+        start_time=None,
+    )
+    assert _output_stamp(dated) == "20110823_223010"
+    assert _output_stamp(undated) == "2025-02-02"  # stem keeps undated outputs distinct
+
+
+def test_dedupe_path_disambiguates_collisions():
+    from fitgrabber.cli import _dedupe_path
+
+    used: set[str] = set()
+    base = Path("/out/20240803_183138_running_merged.fit")
+    p1 = _dedupe_path(base, used)
+    p2 = _dedupe_path(base, used)  # same name again -> suffixed
+    p3 = _dedupe_path(base, used)
+    assert p1 == base
+    assert p2 == Path("/out/20240803_183138_running_merged_2.fit")
+    assert p3 == Path("/out/20240803_183138_running_merged_3.fit")
+    assert len({str(p1), str(p2), str(p3)}) == 3
+
+
+def test_non_activity_platforms_excluded_from_catalog():
+    from fitgrabber.config import NON_ACTIVITY_PLATFORMS, PLATFORMS
+
+    assert "garmin-health" in NON_ACTIVITY_PLATFORMS
+    assert "garmin-health" in PLATFORMS  # still synced, just not cataloged
+
+
+def test_ts_in_window_scopes_prune_to_date_range():
+    from fitgrabber.cli import _ts_in_window
+
+    after = datetime(2026, 6, 13)
+    before = datetime(2026, 6, 14)
+    inside = "20260613_154616_running_merged.fit"
+    before_window = "20260101_080000_running_merged.fit"
+    after_window = "20260620_080000_running_merged.fit"
+    assert _ts_in_window(inside, after, before) is True
+    assert _ts_in_window(before_window, after, before) is False
+    assert _ts_in_window(after_window, after, before) is False
+    # before is exclusive, after inclusive (matches _filter_by_date)
+    assert _ts_in_window("20260614_000000_x.fit", after, before) is False
+    assert _ts_in_window("20260613_000000_x.fit", after, before) is True
+    # unparseable prefix is never a prune candidate
+    assert _ts_in_window("notimestamp.json", after, before) is False
+
+
+def test_resolve_power_source():
+    from fitgrabber.parsers.fit_parser import _resolve_power_source
+
+    # Garmin FIT with both Stryd dev power and native power → Stryd canonical
+    assert _resolve_power_source("garmin", saw_stryd=True, saw_native=True) == (
+        "stryd",
+        "garmin_native",
+    )
+    # Garmin with only native running power
+    assert _resolve_power_source("garmin", saw_stryd=False, saw_native=True) == (
+        "garmin_native",
+        None,
+    )
+    # Standalone Stryd file (native power field is Stryd's own)
+    assert _resolve_power_source("stryd", saw_stryd=False, saw_native=True) == ("stryd", None)
+    # No power at all
+    assert _resolve_power_source("garmin", saw_stryd=False, saw_native=False) == (None, None)
+
+
+def test_detect_hr_source():
+    from fitgrabber.parsers.fit_parser import _detect_hr_source
+
+    baro = {"device_type": "barometer", "ant_device_type": None, "source_type": "local"}
+    whr = {"device_type": "whr", "ant_device_type": None, "source_type": "local"}
+    ble_strap = {
+        "device_type": "heart_rate",
+        "ant_device_type": None,
+        "source_type": "bluetooth_low_energy",
+    }
+    ant_strap = {"device_type": None, "ant_device_type": 120, "source_type": "antplus"}
+
+    # Barometer must not be mistaken for an HR sensor (the old bug)
+    assert _detect_hr_source([baro, whr]) == "wrist"
+    # External strap wins over wrist optical
+    assert _detect_hr_source([baro, ble_strap, whr]) == "chest"
+    assert _detect_hr_source([ant_strap, whr]) == "chest"
+    assert _detect_hr_source([baro]) is None
+
+
+def test_merge_propagates_provenance():
+    now = datetime(2024, 1, 1, 8, 0)
+    garmin = Activity(
+        source_file=Path("a.fit"),
+        source_platform="garmin",
+        sport="running",
+        hr_source="chest",
+        hr_detail="rr",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        rr_intervals=[0.5, 0.51, 0.49],
+        track_points=[TrackPoint(timestamp=now, heart_rate=150, power=260)],
+    )
+    strava = Activity(
+        source_file=Path("b.json"),
+        source_platform="strava",
+        sport="running",
+        power_source="garmin",
+        track_points=[TrackPoint(timestamp=now, power=260)],
+    )
+    merged = merge_activities([garmin, strava])
+    assert merged.power_source == "stryd"
+    assert merged.power_source_alt == "garmin_native"
+    assert merged.hr_source == "chest"
+    assert merged.hr_detail == "rr"
+    assert merged.rr_intervals == [0.5, 0.51, 0.49]
+
+
+def test_write_sidecar(tmp_path):
+    from fitgrabber.export.sidecar import sidecar_path, write_sidecar
+
+    activity = Activity(
+        source_file=Path("x.fit"),
+        source_platform="merged",
+        sport="running",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        hr_source="chest",
+        hr_detail="rr",
+        rr_intervals=[0.545, 0.539],
+        metadata={"sources": [{"platform": "garmin", "power_source": "stryd"}]},
+    )
+    fit_path = tmp_path / "20260606_140048_running_merged.fit"
+    out = write_sidecar(activity, fit_path)
+    assert out == sidecar_path(fit_path)
+    assert out.name == "20260606_140048_running_merged.meta.json"
+
+    import json
+
+    data = json.loads(out.read_text())
+    assert data["power_source"] == "stryd"
+    assert data["power_source_alt"] == "garmin_native"
+    assert data["hr_source"] == "chest"
+    assert data["has_rr"] is True
+    assert data["rr_ms"] == [545, 539]
+
+
 def test_anomaly_detects_speed_spike():
     now = datetime(2024, 1, 1, 8, 0)
     points = [

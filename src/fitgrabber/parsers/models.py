@@ -12,7 +12,8 @@ class TrackPoint:
     heart_rate: int | None = None  # bpm
     cadence: int | None = None  # rpm or spm
     speed: float | None = None  # m/s
-    power: int | None = None  # watts
+    power: int | None = None  # watts (canonical: Stryd-preferred)
+    power_native: int | None = None  # watts from device-native power, when distinct from canonical
     temperature: float | None = None  # celsius
     distance: float | None = None  # cumulative meters
 
@@ -54,6 +55,12 @@ class Activity:
     avg_cadence: int | None = None
     avg_power: int | None = None
     hr_source: str | None = None  # "chest", "wrist", or None
+    hr_detail: str | None = None  # "rr" when beat-to-beat R-R data is present, else None
+    power_source: str | None = None  # "stryd", "garmin_native", "strava", or None
+    power_source_alt: str | None = (
+        None  # secondary source when canonical differs (e.g. "garmin_native")
+    )
+    rr_intervals: list[float] = field(default_factory=list)  # beat-to-beat intervals, seconds
     name: str = ""
     notes: str = ""
     metadata: dict = field(default_factory=dict)

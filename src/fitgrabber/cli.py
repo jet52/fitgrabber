@@ -220,7 +220,7 @@ def _run_process(
                 return dt.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
             except ValueError:
                 pass
-        return ""
+        return Path(str(entry["source_file"])).stem  # stable id when start_time is absent
 
     # Step 4: Process unique activities — parse, detect anomalies, save
     typer.echo("Processing individual activities...")
@@ -228,6 +228,7 @@ def _run_process(
     skipped = 0
     all_anomalies: list[dict] = []
     new_manifest: dict[str, dict] = {}
+    used_paths: set[str] = set()  # disambiguate same-second/same-sport output names
 
     for entry in unique_entries:
         ts = _ts_prefix(entry)
@@ -238,7 +239,7 @@ def _run_process(
             skipped += 1
             continue
         if existing:
-            Path(existing["output_file"]).unlink(missing_ok=True)
+            _remove_output(existing["output_file"])
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
         activity = _get_activity(entry)
@@ -248,7 +249,7 @@ def _run_process(
             _log_activity(activity)
         anomalies = detect_anomalies(activity)
         _collect_anomalies(all_anomalies, str(activity.source_file), anomalies)
-        out_path = _save_activity_json(activity, ind_dir, anomalies)
+        out_path = _save_activity_json(activity, ind_dir, anomalies, used_paths)
         new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         ind_count += 1
 
@@ -266,7 +267,7 @@ def _run_process(
             skipped += 1
             continue
         if existing:
-            Path(existing["output_file"]).unlink(missing_ok=True)
+            _remove_output(existing["output_file"])
             if verbose:
                 typer.echo(f"  Removed stale: {existing['output_file']}")
 
@@ -281,7 +282,7 @@ def _run_process(
                     _log_activity(activities[0])
                 anomalies = detect_anomalies(activities[0])
                 _collect_anomalies(all_anomalies, str(activities[0].source_file), anomalies)
-                out_path = _save_activity_json(activities[0], ind_dir, anomalies)
+                out_path = _save_activity_json(activities[0], ind_dir, anomalies, used_paths)
                 new_manifest[ts] = {
                     "output_file": str(out_path),
                     "source_files": list(sources),
@@ -298,7 +299,7 @@ def _run_process(
         anomalies = detect_anomalies(merged)
         label = "merged:" + ",".join(str(a.source_file) for a in activities)
         _collect_anomalies(all_anomalies, label, anomalies)
-        out_path = _save_merged_fit(merged, merged_dir)
+        out_path = _save_merged_fit(merged, merged_dir, used_paths)
         new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         merged_count += 1
 
@@ -310,14 +311,76 @@ def _run_process(
         errors = sum(1 for a in all_anomalies if a["severity"] == "error")
         typer.echo(f"  Anomalies: {errors} errors, {warnings} warnings → {report_path}")
 
+    # Carry forward manifest entries for activities outside the processed window
+    # so a date-scoped run doesn't drop them from the authoritative manifest.
+    if after or before:
+        for ts, info in manifest.items():
+            if ts not in new_manifest and not _ts_in_window(ts, after, before):
+                new_manifest[ts] = info
+
     # Step 7: Save manifest
     save_manifest(cfg, new_manifest)
+
+    # Step 7.5: Prune output files no longer referenced by the manifest
+    _prune_orphan_outputs(cfg, new_manifest, verbose, after, before)
 
     # Step 8: Touch marker so the web UI auto-refreshes
     (cfg.data_dir / "processed" / ".last_processed").write_text("")
 
     skip_msg = f", {skipped} skipped" if skipped else ""
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
+
+
+def _prune_orphan_outputs(
+    cfg: Config,
+    manifest: dict[str, dict],
+    verbose: bool,
+    after: object = None,
+    before: object = None,
+) -> None:
+    """Delete processed outputs (and merged sidecars) not referenced by the manifest.
+
+    Reprocessing can leave orphans when an activity's timestamp prefix shifts or a
+    source is removed. The manifest is the authoritative set of intended outputs.
+
+    When a date filter is active, only files within the processed window are
+    candidates for pruning — out-of-window outputs weren't reprocessed this run,
+    so the (window-only) manifest doesn't reference them and they must be kept.
+    """
+    referenced = {Path(info["output_file"]) for info in manifest.values()}
+    removed = 0
+    for d in (cfg.processed_merged_dir(), cfg.processed_individual_dir()):
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if f.name.endswith(".meta.json"):
+                continue  # sidecar removed alongside its .fit
+            if f.suffix not in (".fit", ".json"):
+                continue
+            if (after or before) and not _ts_in_window(f.name, after, before):
+                continue  # outside the processed window — not a prune candidate
+            if f not in referenced:
+                _remove_output(str(f))
+                removed += 1
+                if verbose:
+                    typer.echo(f"  Pruned orphan: {f.name}")
+    if removed:
+        typer.echo(f"  Pruned {removed} orphaned output file(s)")
+
+
+def _ts_in_window(name: str, after: object, before: object) -> bool:
+    """Whether an output file's leading YYYYMMDD_HHMMSS timestamp is in [after, before)."""
+    from datetime import datetime
+
+    try:
+        t = datetime.strptime(name[:15], "%Y%m%d_%H%M%S")
+    except ValueError:
+        return False  # unparseable prefix — leave it alone
+    if after and t < after:
+        return False
+    if before and t >= before:
+        return False
+    return True
 
 
 def _clean_stale_individuals(ind_dir: Path, dup_groups: list[list[dict]], verbose: bool) -> None:
@@ -412,15 +475,56 @@ def _collect_anomalies(dest: list[dict], file_label: str, anomalies: list) -> No
         )
 
 
-def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
-    """Write a merged Activity as a FIT file."""
-    from fitgrabber.export.fit_writer import write_fit
+def _remove_output(output_file: str) -> None:
+    """Delete a processed output file and its sidecar (if a merged FIT)."""
+    path = Path(output_file)
+    path.unlink(missing_ok=True)
+    if path.suffix == ".fit":
+        from fitgrabber.export.sidecar import sidecar_path
 
-    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+        sidecar_path(path).unlink(missing_ok=True)
+
+
+def _output_stamp(activity: object) -> str:
+    """Filename timestamp prefix, falling back to the source-file stem.
+
+    Activities without a parseable start_time (e.g. summary-only files) would all
+    collapse to a single "unknown" name and overwrite each other; the source stem
+    keeps each output distinct.
+    """
+    if activity.start_time:
+        return activity.start_time.strftime("%Y%m%d_%H%M%S")
+    return Path(str(activity.source_file)).stem
+
+
+def _dedupe_path(path: Path, used: set[str] | None) -> Path:
+    """Append a numeric suffix so two activities never overwrite one output file.
+
+    Distinct activities can share a start-second and sport (e.g. overlapping
+    multi-part recordings), producing identical names within a single run.
+    """
+    if used is None:
+        return path
+    candidate = path
+    i = 2
+    while str(candidate) in used:
+        candidate = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        i += 1
+    used.add(str(candidate))
+    return candidate
+
+
+def _save_merged_fit(activity: object, dest_dir: Path, used: set[str] | None = None) -> Path:
+    """Write a merged Activity as a FIT file plus a provenance/R-R sidecar."""
+    from fitgrabber.export.fit_writer import write_fit
+    from fitgrabber.export.sidecar import write_sidecar
+
+    ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_merged.fit"
-    path = dest_dir / filename
+    path = _dedupe_path(dest_dir / filename, used)
     write_fit(activity, path)
+    write_sidecar(activity, path)
     return path
 
 
@@ -428,6 +532,7 @@ def _save_activity_json(
     activity: object,
     dest_dir: Path,
     anomalies: list | None = None,
+    used: set[str] | None = None,
 ) -> Path:
     """Serialize an Activity to a JSON file in dest_dir."""
     import json
@@ -436,10 +541,10 @@ def _save_activity_json(
 
     fill_missing_summary(activity)
 
-    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+    ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_{activity.source_platform}.json"
-    path = dest_dir / filename
+    path = _dedupe_path(dest_dir / filename, used)
 
     data = {
         "source_file": str(activity.source_file),
@@ -455,6 +560,13 @@ def _save_activity_json(
         "avg_speed": activity.avg_speed,
         "avg_cadence": activity.avg_cadence,
         "avg_power": activity.avg_power,
+        "power_source": activity.power_source,
+        "power_source_alt": activity.power_source_alt,
+        "hr_source": activity.hr_source,
+        "hr_detail": activity.hr_detail,
+        "rr_ms": [round(v * 1000) for v in activity.rr_intervals]
+        if activity.rr_intervals
+        else None,
         "name": activity.name,
         "metadata": activity.metadata,
         "num_track_points": len(activity.track_points),
