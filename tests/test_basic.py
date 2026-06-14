@@ -255,6 +255,20 @@ def test_output_stamp_falls_back_to_source_stem():
     assert _output_stamp(undated) == "2025-02-02"  # stem keeps undated outputs distinct
 
 
+def test_dedupe_path_disambiguates_collisions():
+    from fitgrabber.cli import _dedupe_path
+
+    used: set[str] = set()
+    base = Path("/out/20240803_183138_running_merged.fit")
+    p1 = _dedupe_path(base, used)
+    p2 = _dedupe_path(base, used)  # same name again -> suffixed
+    p3 = _dedupe_path(base, used)
+    assert p1 == base
+    assert p2 == Path("/out/20240803_183138_running_merged_2.fit")
+    assert p3 == Path("/out/20240803_183138_running_merged_3.fit")
+    assert len({str(p1), str(p2), str(p3)}) == 3
+
+
 def test_non_activity_platforms_excluded_from_catalog():
     from fitgrabber.config import NON_ACTIVITY_PLATFORMS, PLATFORMS
 

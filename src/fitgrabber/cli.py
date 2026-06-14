@@ -228,6 +228,7 @@ def _run_process(
     skipped = 0
     all_anomalies: list[dict] = []
     new_manifest: dict[str, dict] = {}
+    used_paths: set[str] = set()  # disambiguate same-second/same-sport output names
 
     for entry in unique_entries:
         ts = _ts_prefix(entry)
@@ -248,7 +249,7 @@ def _run_process(
             _log_activity(activity)
         anomalies = detect_anomalies(activity)
         _collect_anomalies(all_anomalies, str(activity.source_file), anomalies)
-        out_path = _save_activity_json(activity, ind_dir, anomalies)
+        out_path = _save_activity_json(activity, ind_dir, anomalies, used_paths)
         new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         ind_count += 1
 
@@ -281,7 +282,7 @@ def _run_process(
                     _log_activity(activities[0])
                 anomalies = detect_anomalies(activities[0])
                 _collect_anomalies(all_anomalies, str(activities[0].source_file), anomalies)
-                out_path = _save_activity_json(activities[0], ind_dir, anomalies)
+                out_path = _save_activity_json(activities[0], ind_dir, anomalies, used_paths)
                 new_manifest[ts] = {
                     "output_file": str(out_path),
                     "source_files": list(sources),
@@ -298,7 +299,7 @@ def _run_process(
         anomalies = detect_anomalies(merged)
         label = "merged:" + ",".join(str(a.source_file) for a in activities)
         _collect_anomalies(all_anomalies, label, anomalies)
-        out_path = _save_merged_fit(merged, merged_dir)
+        out_path = _save_merged_fit(merged, merged_dir, used_paths)
         new_manifest[ts] = {"output_file": str(out_path), "source_files": list(sources)}
         merged_count += 1
 
@@ -496,7 +497,24 @@ def _output_stamp(activity: object) -> str:
     return Path(str(activity.source_file)).stem
 
 
-def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
+def _dedupe_path(path: Path, used: set[str] | None) -> Path:
+    """Append a numeric suffix so two activities never overwrite one output file.
+
+    Distinct activities can share a start-second and sport (e.g. overlapping
+    multi-part recordings), producing identical names within a single run.
+    """
+    if used is None:
+        return path
+    candidate = path
+    i = 2
+    while str(candidate) in used:
+        candidate = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        i += 1
+    used.add(str(candidate))
+    return candidate
+
+
+def _save_merged_fit(activity: object, dest_dir: Path, used: set[str] | None = None) -> Path:
     """Write a merged Activity as a FIT file plus a provenance/R-R sidecar."""
     from fitgrabber.export.fit_writer import write_fit
     from fitgrabber.export.sidecar import write_sidecar
@@ -504,7 +522,7 @@ def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
     ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_merged.fit"
-    path = dest_dir / filename
+    path = _dedupe_path(dest_dir / filename, used)
     write_fit(activity, path)
     write_sidecar(activity, path)
     return path
@@ -514,6 +532,7 @@ def _save_activity_json(
     activity: object,
     dest_dir: Path,
     anomalies: list | None = None,
+    used: set[str] | None = None,
 ) -> Path:
     """Serialize an Activity to a JSON file in dest_dir."""
     import json
@@ -525,7 +544,7 @@ def _save_activity_json(
     ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_{activity.source_platform}.json"
-    path = dest_dir / filename
+    path = _dedupe_path(dest_dir / filename, used)
 
     data = {
         "source_file": str(activity.source_file),
