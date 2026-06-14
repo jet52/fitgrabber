@@ -220,7 +220,7 @@ def _run_process(
                 return dt.fromisoformat(ts).strftime("%Y%m%d_%H%M%S")
             except ValueError:
                 pass
-        return ""
+        return Path(str(entry["source_file"])).stem  # stable id when start_time is absent
 
     # Step 4: Process unique activities — parse, detect anomalies, save
     typer.echo("Processing individual activities...")
@@ -484,12 +484,24 @@ def _remove_output(output_file: str) -> None:
         sidecar_path(path).unlink(missing_ok=True)
 
 
+def _output_stamp(activity: object) -> str:
+    """Filename timestamp prefix, falling back to the source-file stem.
+
+    Activities without a parseable start_time (e.g. summary-only files) would all
+    collapse to a single "unknown" name and overwrite each other; the source stem
+    keeps each output distinct.
+    """
+    if activity.start_time:
+        return activity.start_time.strftime("%Y%m%d_%H%M%S")
+    return Path(str(activity.source_file)).stem
+
+
 def _save_merged_fit(activity: object, dest_dir: Path) -> Path:
     """Write a merged Activity as a FIT file plus a provenance/R-R sidecar."""
     from fitgrabber.export.fit_writer import write_fit
     from fitgrabber.export.sidecar import write_sidecar
 
-    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+    ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_merged.fit"
     path = dest_dir / filename
@@ -510,7 +522,7 @@ def _save_activity_json(
 
     fill_missing_summary(activity)
 
-    ts = activity.start_time.strftime("%Y%m%d_%H%M%S") if activity.start_time else "unknown"
+    ts = _output_stamp(activity)
     name_slug = activity.sport or "activity"
     filename = f"{ts}_{name_slug}_{activity.source_platform}.json"
     path = dest_dir / filename

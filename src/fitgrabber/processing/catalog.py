@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from fitgrabber.config import PLATFORMS, Config
+from fitgrabber.config import NON_ACTIVITY_PLATFORMS, PLATFORMS, Config
 from fitgrabber.parsers.models import Activity
 
 SUPPORTED_EXTENSIONS = {".fit", ".gpx", ".tcx", ".csv", ".json", ".zip"}
@@ -26,6 +26,8 @@ def build_catalog(cfg: Config, progress: bool = True) -> tuple[list[dict], dict[
     errors = 0
 
     for platform in PLATFORMS:
+        if platform in NON_ACTIVITY_PLATFORMS:
+            continue  # wellness/non-activity data — kept in raw/, not cataloged
         raw_dir = cfg.raw_dir(platform)
         if not raw_dir.exists():
             continue

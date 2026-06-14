@@ -214,6 +214,54 @@ def test_merge_recomputes_lap_power_from_canonical_stream():
     assert merged.laps[0].max_power == 150
 
 
+def test_tcx_recovers_start_time_from_summary_only_file(tmp_path):
+    from fitgrabber.parsers.tcx_parser import parse
+
+    tcx = tmp_path / "summary.tcx"
+    tcx.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/'
+        'TrainingCenterDatabase/v2">\n'
+        "  <Activities><Activity Sport=\"Running\">\n"
+        "    <Id>2011-08-23T22:30:10.000Z</Id>\n"
+        '    <Lap StartTime="2011-08-23T22:30:10.000Z">\n'
+        "      <TotalTimeSeconds>3780.0</TotalTimeSeconds>\n"
+        "      <DistanceMeters>12874.75</DistanceMeters>\n"
+        "    </Lap>\n"
+        "  </Activity></Activities>\n"
+        "</TrainingCenterDatabase>\n"
+    )
+    a = parse(tcx, "garmin")
+    assert a.track_points == []
+    assert a.start_time is not None
+    assert a.start_time.strftime("%Y%m%d_%H%M%S") == "20110823_223010"
+    assert a.total_duration == 3780.0
+
+
+def test_output_stamp_falls_back_to_source_stem():
+    from fitgrabber.cli import _output_stamp
+
+    dated = Activity(
+        source_file=Path("/raw/garmin/123.tcx"),
+        source_platform="garmin",
+        start_time=datetime(2011, 8, 23, 22, 30, 10),
+    )
+    undated = Activity(
+        source_file=Path("/raw/garmin/2025-02-02.json"),
+        source_platform="garmin",
+        start_time=None,
+    )
+    assert _output_stamp(dated) == "20110823_223010"
+    assert _output_stamp(undated) == "2025-02-02"  # stem keeps undated outputs distinct
+
+
+def test_non_activity_platforms_excluded_from_catalog():
+    from fitgrabber.config import NON_ACTIVITY_PLATFORMS, PLATFORMS
+
+    assert "garmin-health" in NON_ACTIVITY_PLATFORMS
+    assert "garmin-health" in PLATFORMS  # still synced, just not cataloged
+
+
 def test_ts_in_window_scopes_prune_to_date_range():
     from fitgrabber.cli import _ts_in_window
 
