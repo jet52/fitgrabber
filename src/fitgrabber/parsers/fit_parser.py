@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import fitdecode
@@ -221,11 +222,21 @@ def _parse_lap(frame: fitdecode.FitDataMessage) -> Lap | None:
     trigger = _get_field(frame, "lap_trigger")
     intensity = _get_field(frame, "intensity")
 
+    # Some Garmin laps write a constant (activity-start) into the lap `timestamp`
+    # field instead of the lap end, leaving a degenerate window. Derive the end
+    # from start + elapsed time, which is authoritative, when it is the later value.
+    elapsed = _get_field(frame, "total_elapsed_time")
+    end = ts
+    if elapsed:
+        derived_end = start + timedelta(seconds=elapsed)
+        if derived_end > end:
+            end = derived_end
+
     return Lap(
         start_time=start,
-        end_time=ts,
+        end_time=end,
         total_distance=_get_field(frame, "total_distance"),
-        total_duration=_get_field(frame, "total_elapsed_time"),
+        total_duration=elapsed,
         total_calories=_get_field(frame, "total_calories"),
         avg_heart_rate=_get_field(frame, "avg_heart_rate"),
         max_heart_rate=_get_field(frame, "max_heart_rate"),

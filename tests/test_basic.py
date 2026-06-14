@@ -176,6 +176,62 @@ def test_merge_selects_best_laps():
     assert merged.laps[0].lap_trigger == "manual"
 
 
+def test_merge_recomputes_lap_power_from_canonical_stream():
+    now = datetime(2024, 1, 1, 8, 0)
+    # Lap-source records carry native power (200W) in the lap summary, but the
+    # canonical merged record stream (with Stryd power 150W) should win.
+    pts = [
+        TrackPoint(timestamp=now + timedelta(seconds=s), heart_rate=140, power=150)
+        for s in range(0, 300, 10)
+    ]
+    a1 = Activity(
+        source_file=Path("a.fit"),
+        source_platform="garmin",
+        sport="running",
+        power_source="stryd",
+        power_source_alt="garmin_native",
+        track_points=pts,
+        laps=[
+            Lap(
+                start_time=now,
+                end_time=now,  # degenerate end (broken Garmin lap timestamp)
+                total_duration=300,
+                lap_trigger="manual",
+                avg_power=200,  # stale native lap power
+                max_power=260,
+            ),
+        ],
+    )
+    a2 = Activity(
+        source_file=Path("b.fit"),
+        source_platform="strava",
+        sport="running",
+        track_points=[TrackPoint(timestamp=now, heart_rate=140)],
+        laps=[Lap(start_time=now, end_time=now + timedelta(minutes=5), lap_trigger="session_end")],
+    )
+    merged = merge_activities([a1, a2])
+    assert merged.laps[0].avg_power == 150
+    assert merged.laps[0].max_power == 150
+
+
+def test_ts_in_window_scopes_prune_to_date_range():
+    from fitgrabber.cli import _ts_in_window
+
+    after = datetime(2026, 6, 13)
+    before = datetime(2026, 6, 14)
+    inside = "20260613_154616_running_merged.fit"
+    before_window = "20260101_080000_running_merged.fit"
+    after_window = "20260620_080000_running_merged.fit"
+    assert _ts_in_window(inside, after, before) is True
+    assert _ts_in_window(before_window, after, before) is False
+    assert _ts_in_window(after_window, after, before) is False
+    # before is exclusive, after inclusive (matches _filter_by_date)
+    assert _ts_in_window("20260614_000000_x.fit", after, before) is False
+    assert _ts_in_window("20260613_000000_x.fit", after, before) is True
+    # unparseable prefix is never a prune candidate
+    assert _ts_in_window("notimestamp.json", after, before) is False
+
+
 def test_resolve_power_source():
     from fitgrabber.parsers.fit_parser import _resolve_power_source
 

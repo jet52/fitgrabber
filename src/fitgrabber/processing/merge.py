@@ -1,9 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import typer
 
-from fitgrabber.parsers.models import Activity, TrackPoint
+from fitgrabber.parsers.models import Activity, Lap, TrackPoint
 
 POINT_MERGE_TOLERANCE = timedelta(seconds=2)
 QUALITY_WINDOW_SECONDS = 60
@@ -201,6 +201,10 @@ def merge_activities(activities: list[Activity], verbose: bool = False) -> Activ
         i = j
 
     laps, lap_source = _select_laps(activities, verbose)
+    # Lap power is recomputed from the canonical (merged) record stream so lap
+    # summaries match the per-record power source (e.g. Stryd), not whatever
+    # native power the lap-source platform recorded.
+    laps = _recompute_lap_power(laps, merged)
 
     # Summary fields from highest-priority source
     result_distance = _priority_summary(activities, "total_distance", "distance")
@@ -608,6 +612,36 @@ def _lap_score(activity: Activity) -> int:
     triggers = {lap.lap_trigger for lap in activity.laps if lap.lap_trigger}
     best = max((_LAP_TRIGGER_PRIORITY.get(t, 0) for t in triggers), default=0)
     return best + (1 if len(activity.laps) > 1 else 0)
+
+
+def _recompute_lap_power(laps: list[Lap], merged: list[TrackPoint]) -> list[Lap]:
+    """Recompute each lap's avg/max power from the canonical merged record stream.
+
+    The selected laps may come from a source whose native power differs from the
+    canonical per-record power (e.g. Garmin native vs Stryd). Returns new Lap
+    objects with avg_power/max_power derived from merged points in each lap's
+    time window; both are set to None when the window has no power samples.
+    """
+    if not laps:
+        return laps
+    out: list[Lap] = []
+    for lap in laps:
+        # Guard against a degenerate lap window (some Garmin files write a constant
+        # into the lap end timestamp): fall back to start + duration.
+        end = lap.end_time
+        if lap.total_duration:
+            derived = lap.start_time + timedelta(seconds=lap.total_duration)
+            if derived > end:
+                end = derived
+        powers = [
+            p.power
+            for p in merged
+            if p.power is not None and lap.start_time <= p.timestamp <= end
+        ]
+        avg = round(sum(powers) / len(powers)) if powers else None
+        mx = max(powers) if powers else None
+        out.append(replace(lap, avg_power=avg, max_power=mx))
+    return out
 
 
 def _select_laps(activities: list[Activity], verbose: bool) -> tuple[list, str]:

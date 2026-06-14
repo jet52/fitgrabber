@@ -310,11 +310,18 @@ def _run_process(
         errors = sum(1 for a in all_anomalies if a["severity"] == "error")
         typer.echo(f"  Anomalies: {errors} errors, {warnings} warnings → {report_path}")
 
+    # Carry forward manifest entries for activities outside the processed window
+    # so a date-scoped run doesn't drop them from the authoritative manifest.
+    if after or before:
+        for ts, info in manifest.items():
+            if ts not in new_manifest and not _ts_in_window(ts, after, before):
+                new_manifest[ts] = info
+
     # Step 7: Save manifest
     save_manifest(cfg, new_manifest)
 
     # Step 7.5: Prune output files no longer referenced by the manifest
-    _prune_orphan_outputs(cfg, new_manifest, verbose)
+    _prune_orphan_outputs(cfg, new_manifest, verbose, after, before)
 
     # Step 8: Touch marker so the web UI auto-refreshes
     (cfg.data_dir / "processed" / ".last_processed").write_text("")
@@ -323,11 +330,21 @@ def _run_process(
     typer.echo(f"\nDone: {ind_count} individual + {merged_count} merged{skip_msg}")
 
 
-def _prune_orphan_outputs(cfg: Config, manifest: dict[str, dict], verbose: bool) -> None:
+def _prune_orphan_outputs(
+    cfg: Config,
+    manifest: dict[str, dict],
+    verbose: bool,
+    after: object = None,
+    before: object = None,
+) -> None:
     """Delete processed outputs (and merged sidecars) not referenced by the manifest.
 
     Reprocessing can leave orphans when an activity's timestamp prefix shifts or a
     source is removed. The manifest is the authoritative set of intended outputs.
+
+    When a date filter is active, only files within the processed window are
+    candidates for pruning — out-of-window outputs weren't reprocessed this run,
+    so the (window-only) manifest doesn't reference them and they must be kept.
     """
     referenced = {Path(info["output_file"]) for info in manifest.values()}
     removed = 0
@@ -339,6 +356,8 @@ def _prune_orphan_outputs(cfg: Config, manifest: dict[str, dict], verbose: bool)
                 continue  # sidecar removed alongside its .fit
             if f.suffix not in (".fit", ".json"):
                 continue
+            if (after or before) and not _ts_in_window(f.name, after, before):
+                continue  # outside the processed window — not a prune candidate
             if f not in referenced:
                 _remove_output(str(f))
                 removed += 1
@@ -346,6 +365,21 @@ def _prune_orphan_outputs(cfg: Config, manifest: dict[str, dict], verbose: bool)
                     typer.echo(f"  Pruned orphan: {f.name}")
     if removed:
         typer.echo(f"  Pruned {removed} orphaned output file(s)")
+
+
+def _ts_in_window(name: str, after: object, before: object) -> bool:
+    """Whether an output file's leading YYYYMMDD_HHMMSS timestamp is in [after, before)."""
+    from datetime import datetime
+
+    try:
+        t = datetime.strptime(name[:15], "%Y%m%d_%H%M%S")
+    except ValueError:
+        return False  # unparseable prefix — leave it alone
+    if after and t < after:
+        return False
+    if before and t >= before:
+        return False
+    return True
 
 
 def _clean_stale_individuals(ind_dir: Path, dup_groups: list[list[dict]], verbose: bool) -> None:
